@@ -84,6 +84,12 @@ _NOTICE_BY_SLUG: dict = {
     # STEP 28-155: BMI는 급여/노무 계산기가 아니므로 위 fallback(근로계약·법령 문구)이
     # 부적절하다(STEP 28-153에서 확인) — 건강 계산기 전용 고지문으로 명시 등록한다.
     "bmi-calculator": "본 결과는 참고용이며, 정확한 건강 상태 진단 및 평가 전문 의료진과 상담하시기 바랍니다.",
+    # 병역/군인 계산기 — 근로계약 fallback 방지
+    "military-discharge-date": "본 계산 결과는 참고용이며, 정확한 정보는 병무청 또는 관련 기관에 확인하시기 바랍니다.",
+    # 세금/정부혜택 도메인 계산기 — 근로계약 fallback 방지
+    "자동차_취등록세_계산기": "본 계산 결과는 참고용이며, 실제 취득세는 차종·가격 및 관련 법령에서 정한 표준세율·감면에 따라 달라질 수 있습니다.",
+    "연금저축_irp_세액공제_계산기": "본 계산 결과는 참고용이며, 실제 세액공제액은 납입액·소득 구간 및 관련 세법 적용에 따라 달라질 수 있습니다.",
+    "irp-tax-credit-v2": "본 계산 결과는 참고용이며, 실제 세액공제액은 납입액·소득 구간 및 관련 세법 적용에 따라 달라질 수 있습니다.",
 }
 
 # Phase C: 계산기별 관련 글 데이터 (정적, 계산기 지원용 블로그 Set)
@@ -1063,6 +1069,87 @@ def _compute_js(calc) -> str:
             )
             + _js_close()
         )
+    if str(calc.get("slug", "")) == "연금저축_irp_세액공제_계산기":
+        # IRP-04: IRP-01~03에서 확정된 공식(700만원/연소득×12% cap은 실제 법령에
+        # 없음 — 소득세법 제59조의3 기준 600만/900만 한도, 총급여 5,500만원 기준
+        # 15%/12% 2단계 세율)을 unemployment-benefit과 동일한 slug 격리 방식으로
+        # 반영한다. 입력 validation은 공용 _compute_validation_js()를 그대로
+        # 재사용해 Registry compute_rules(non_negative_inputs) 선언만으로 처리한다.
+        slug = str(calc.get("slug", ""))
+        rules = (_registry().get(slug) or {}).get("compute_rules") or {}
+        validation = _compute_validation_js(rules, {}) if rules else ""
+        return (
+            _js_open()
+            + _js_read("annual_income")
+            + _js_read("pension_contribution")
+            + _js_read("irp_contribution")
+            + _js_init_out()
+            + validation
+            + (
+            '  var PENSION_CAP = 6000000;\n'
+            '  var TOTAL_CAP = 9000000;\n'
+            '  var INCOME_THRESHOLD = 55000000;\n'
+            '  var pension_recognized = Math.min(pension_contribution, PENSION_CAP);\n'
+            '  var deductible_amount = Math.min(pension_recognized + irp_contribution, TOTAL_CAP);\n'
+            '  var tax_credit_rate = (annual_income <= INCOME_THRESHOLD) ? 0.15 : 0.12;\n'
+            '  var estimated_tax_credit = deductible_amount * tax_credit_rate;\n'
+            '  out["deductible_amount"] = deductible_amount;\n'
+            '  out["estimated_tax_credit"] = estimated_tax_credit;\n'
+            '  out._formula = "연금저축 " + pension_recognized.toLocaleString() + "원(한도 600만원 적용) + IRP "'
+            ' + irp_contribution.toLocaleString() + "원 → 합산 인정액 " + deductible_amount.toLocaleString()'
+            ' + "원(한도 900만원) × 적용 세액공제율 " + (tax_credit_rate * 100) + "%(총급여 5,500만원 기준) = "'
+            ' + Math.round(estimated_tax_credit).toLocaleString() + "원";\n'
+            '  return out;\n'
+            )
+            + _js_close()
+        )
+    if str(calc.get("slug", "")) == "irp-tax-credit-v2":
+        # IRP-24: 저장소 구조(IRP-23) 재현성 검증을 위해 처음부터 새로 생성한
+        # 계산기. Contract(build_contract)에 지정한 formula는 삼항 조건식(IfExp)을
+        # 포함해 안전식 평가기가 거부하므로(_formula_valid=False, "허용되지 않은
+        # 식: IfExp") 다른 다수 계산기(unemployment-benefit/four-insurances/
+        # 자동차_취등록세_계산기/연금저축_irp_세액공제_계산기)와 동일한 slug 격리
+        # 분기 방식으로 실제 계산 로직을 둔다. 법적 근거는 legal_master
+        # income_tax_act_137(소득세법 제59조의3)과 동일 — 같은 실존 법령을
+        # 인용하는 것이며 기존 IRP 코드/파일을 복사한 것이 아니다.
+        slug = str(calc.get("slug", ""))
+        rules = (_registry().get(slug) or {}).get("compute_rules") or {}
+        validation = _compute_validation_js(rules, {}) if rules else ""
+        return (
+            _js_open()
+            + _js_read("annual_income")
+            + _js_read("pension_contribution")
+            + _js_read("irp_contribution")
+            + _js_init_out()
+            + validation
+            + (
+            '  var PENSION_ANNUAL_CAP = 6000000;\n'
+            '  var COMBINED_ANNUAL_CAP = 9000000;\n'
+            '  var HIGH_INCOME_LINE = 55000000;\n'
+            '  var pension_capped = Math.min(pension_contribution, PENSION_ANNUAL_CAP);\n'
+            '  var combined_raw = pension_capped + irp_contribution;\n'
+            '  var combined_capped = Math.min(combined_raw, COMBINED_ANNUAL_CAP);\n'
+            '  var credit_rate = (annual_income <= HIGH_INCOME_LINE) ? 0.15 : 0.12;\n'
+            '  var credit_amount = combined_capped * credit_rate;\n'
+            # IRP-25: Gemini REVIEW #2 — 입력액이 한도 초과로 조정된 경우 사용자에게
+            # 명시적으로 알린다(기존에는 _formula 상세문구에만 "한도" 언급이 있었고
+            # 눈에 띄는 notices 안내가 없었음 — four-insurances의 notices 패턴과 동일하게 추가).
+            '  if (pension_contribution > PENSION_ANNUAL_CAP) {\n'
+            '    out.notices.push("입력하신 연금저축 납입액(" + pension_contribution.toLocaleString() + "원)이 세액공제 인정 한도(연 600만원)를 초과하여 600만원까지만 인정됩니다 (소득세법 제59조의3).");\n'
+            '  }\n'
+            '  if (combined_raw > COMBINED_ANNUAL_CAP) {\n'
+            '    out.notices.push("연금저축과 IRP 합산 인정액(" + combined_raw.toLocaleString() + "원)이 합산 한도(연 900만원)를 초과하여 900만원까지만 인정됩니다 (소득세법 제59조의3).");\n'
+            '  }\n'
+            '  out["deductible_amount"] = combined_capped;\n'
+            '  out["estimated_tax_credit"] = credit_amount;\n'
+            '  out._formula = "연금저축 인정액 " + pension_capped.toLocaleString() + "원(연 600만원 한도) + IRP "'
+            ' + irp_contribution.toLocaleString() + "원 = 합산 " + combined_capped.toLocaleString()'
+            ' + "원(연 900만원 한도) × 세액공제율 " + (credit_rate * 100) + "%(총급여 5,500만원 기준) = "'
+            ' + Math.round(credit_amount).toLocaleString() + "원";\n'
+            '  return out;\n'
+            )
+            + _js_close()
+        )
     ins = _pj(calc.get("input_schema"), {})
     outs = _pj(calc.get("output_schema"), {})
     formula = _pj(calc.get("formula"), calc.get("formula", ""))
@@ -1817,6 +1904,19 @@ _FOOTER_DISCLAIMER_BY_SLUG: dict = {
     "military-discharge-date": "본 계산 결과는 참고용이며, 정확한 정보는 관련 기관 또는 전문가에게 확인하시기 바랍니다.",
     "real-estate-brokerage-fee": "본 계산 결과는 참고용이며, 정확한 정보는 관련 기관 또는 전문가에게 확인하시기 바랍니다.",
     "freelancer-tax-3p3": "본 계산 결과는 참고용이며, 정확한 정보는 관련 기관 또는 전문가에게 확인하시기 바랍니다.",
+    # 세금/정부혜택 도메인 — 근로계약 fallback 방지
+    "자동차_취등록세_계산기": "본 계산 결과는 참고용이며, 정확한 정보는 관련 기관 또는 전문가에게 확인하시기 바랍니다.",
+    "연금저축_irp_세액공제_계산기": "본 계산 결과는 참고용이며, 정확한 정보는 관련 기관 또는 전문가에게 확인하시기 바랍니다.",
+    "irp-tax-credit-v2": "본 계산 결과는 참고용이며, 정확한 정보는 관련 기관 또는 전문가에게 확인하시기 바랍니다.",
+    # 기존 계산기 누락 보완 — 노동/급여/복지 도메인 기존 문구 유지
+    "annual-leave-allowance": "본 계산 결과는 참고용이며, 실제 연차수당은 통상임금 산정 방식 및 관련 법령에 따라 달라질 수 있습니다.",
+    "four-insurances": "본 계산 결과는 참고용이며, 실제 공제액은 매년 고시되는 보험료율 및 관련 법령에 따라 달라질 수 있습니다.",
+    "weekly-holiday-allowance": "본 계산 결과는 참고용이며, 실제 주휴수당은 소정근로시간 및 관련 법령에 따라 달라질 수 있습니다.",
+    "severance-pay": "본 계산 결과는 참고용이며, 실제 퇴직금은 평균임금 산정 방식 및 관련 법령에 따라 달라질 수 있습니다.",
+    "unemployment-benefit": "본 계산 결과는 참고용이며, 실제 수급액은 이직 사유·수급자격 판정 및 관련 법령에 따라 달라질 수 있습니다.",
+    # 비노동 계산기 오염 방지
+    "연말정산_환급액_계산기": "본 계산 결과는 참고용이며, 실제 환급액(또는 납부액)은 소득·공제 항목 및 관련 세법 적용에 따라 달라질 수 있습니다.",
+    "육아휴직_급여_계산기": "본 계산 결과는 참고용이며, 정확한 정보는 관련 기관 또는 전문가에게 확인하시기 바랍니다.",
 }
 
 
@@ -2013,9 +2113,9 @@ def _generate_tier2b(calc: dict, cfg: dict = None) -> dict:
     html = ""
     if tpl_id:
         try:
-            from adapters.db.factory import get_db_adapter
+            from adapters.db.factory import get_template_storage_adapter
             from repositories.template_repository import TemplateRepository
-            tpl = TemplateRepository(get_db_adapter(cfg or {})).get_by_id(tpl_id)
+            tpl = TemplateRepository(get_template_storage_adapter(cfg or {})).get_by_id(tpl_id)
             html = (tpl or {}).get("html_template") or ""
         except Exception as e:
             _log.warning("Tier2-B 템플릿 로드 실패(slug=%s): %s", calc.get("slug", ""), e)
