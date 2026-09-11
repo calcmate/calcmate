@@ -388,8 +388,8 @@ def generate_index(cfg: dict) -> str:
     <!-- Hero -->
     <section class="cm-hero">
       <div class="cm-hero-logo">{_esc(site_name)}</div>
-      <p class="cm-hero-tagline">대한민국 직장인을 위한 무료 계산기 플랫폼</p>
-      <p class="cm-hero-sub">퇴직금, 주휴수당, 실업급여, 4대보험까지<br>쉽고 빠르게 계산하세요.</p>
+      <p class="cm-hero-tagline">CalcMate — 실생활 계산기 모음</p>
+      <p class="cm-hero-sub">필요한 계산을 쉽고 빠르게, 한곳에서 확인하세요.</p>
       <a class="cm-hero-btn" href="#calculators">계산기 시작하기</a>
     </section>
 

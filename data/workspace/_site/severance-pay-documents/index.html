@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#2563EB">
+<meta name="naver-site-verification" content="de4ad3f1575284b5a8ea58baab7bc7a77b7cf07e">
+<meta name="description" content="입사일과 퇴사일만 입력하면 퇴직금을 자동으로 계산해 드립니다. 간편하게 사용하세요!">
+<title>2026 퇴직금 계산기 | 입사일·퇴사일 입력으로 정확 계산</title>
+<link rel="canonical" href="https://calcmate.kr/severance-pay-documents/">
+<link rel="stylesheet" href="style.css">
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-EP2Q8035VF"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag("js",new Date());gtag("config","G-EP2Q8035VF");</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "퇴직금은 얼마나 일해야 받을 수 있나요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "동일 사업장에서 1년 이상 계속 근로하고, 주당 평균 15시간 이상 근무해야 합니다(근로자퇴직급여보장법 제8조). 1년 미만이면 퇴직금 지급 의무가 없습니다."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "계산에 사용하는 「평균임금」이란 무엇인가요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "퇴직일 이전 3개월간 지급받은 임금 총액을 그 기간 총 일수로 나눈 1일 평균임금입니다. 이 계산기에는 3개월 월평균 임금을 입력해 주세요."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "계약직·파견직도 퇴직금을 받을 수 있나요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "고용 형태와 관계없이 1년 이상 계속 근로 + 주 15시간 이상이면 받습니다. 계약 갱신으로 이어진 경우 근무 기간을 합산합니다."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "퇴직금은 퇴직 후 언제까지 받을 수 있나요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "퇴직일로부터 14일 이내 지급이 원칙입니다(근로기준법 제36조). 정당한 사유 없이 지연 시 지연이자(연 20%)가 붙습니다."
+      }
+    }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  "name": "CalcMate",
+  "url": "https://calcmate.kr",
+  "description": "CalcMate — 실생활 계산기 모음. 필요한 계산을 쉽고 빠르게, 한곳에서 확인하세요."
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "CalcMate",
+      "item": "https://calcmate.kr"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "노무/급여",
+      "item": "https://calcmate.kr/#calculators"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "퇴직금 계산기 서류 안내",
+      "item": "https://calcmate.kr/severance-pay-documents/"
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<div class="sm-wrap">
+
+  <!-- ① Hero -->
+  <header class="sm-hero">
+        <nav class="sm-hero-nav" aria-label="사이트 내비게이션">
+      <a class="sm-hero-nav-link" href="https://calcmate.kr/">홈</a>
+      <a class="sm-hero-nav-link" href="https://calcmate.kr/#calculators">계산기 목록</a>
+    </nav>
+    <div class="sm-hero-badge">💰 노무/급여</div>
+    <h1>퇴직금 계산기 서류 안내</h1>
+    <p class="sm-hero-sub">입사일과 퇴사일만 입력하면 퇴직금을 자동으로 계산해 드립니다. 간편하게 사용하세요!</p>
+  </header>
+
+  <!-- ② 계산 입력 -->
+  <section class="sm-card" aria-label="계산 입력">
+    <h2 class="sm-card-title">계산 입력</h2>
+    <div class="sm-field"><label class="sm-label" for="in_avg_monthly_wage">avg monthly wage</label><div class="sm-input-wrap"><input class="sm-input" type="text" inputmode="numeric" data-comma id="in_avg_monthly_wage" name="in_avg_monthly_wage" placeholder="예) 3000000"></div></div>
+<div class="sm-field"><label class="sm-label" for="in_start_date">start date</label><div class="sm-input-wrap"><input class="sm-input" type="date" id="in_start_date" name="in_start_date"></div></div>
+<div class="sm-field"><label class="sm-label" for="in_end_date">end date</label><div class="sm-input-wrap"><input class="sm-input" type="date" id="in_end_date" name="in_end_date"></div></div>
+    <button class="sm-btn" type="button" onclick="calculate()">퇴직금 서류 안내 계산하기</button>
+  </section>
+
+  <!-- ③ 결과 카드 -->
+  <div class="sm-result-card" id="result-card" role="region" aria-label="계산 결과" aria-live="polite">
+    <div class="sm-result-label">예상 severance pay</div>
+    <div>
+      <span class="sm-result-value" id="out_severance_pay">-</span>
+      <span class="sm-result-unit">원</span>
+    </div>
+
+    <div class="sm-result-sub" id="result-formula"></div>
+    <!-- ③-CTA: 결과 하단 CTA (정적, Phase D에서 개인화) -->
+        <div id="sm-result-cta" class="sm-result-cta">
+      <p class="sm-result-cta-text">더 알아보기</p>
+      <div class="sm-result-cta-links"><a class="sm-result-cta-link" href="https://calcmate.kr/">전체 계산기 보기</a></div>
+    </div>
+  </div>
+
+  <!-- ④ 결과 액션 버튼 (계산 후에만 표시) -->
+  <div class="sm-result-actions" id="result-actions">
+    <button class="sm-action-btn" type="button" data-action="result_save" onclick="saveResultPng()">
+      <span class="sm-action-icon" aria-hidden="true">📄</span>결과 저장
+    </button>
+    <button class="sm-action-btn" type="button" data-action="share" onclick="kakaoShare()">
+      <span class="sm-action-icon" aria-hidden="true">💬</span>카카오 공유
+    </button>
+    <button class="sm-action-btn" type="button" data-action="pwa" id="pwa-btn" onclick="pwaInstall()">
+      <span class="sm-action-icon" aria-hidden="true">📱</span>홈 화면 추가
+    </button>
+  </div>
+
+  <!-- ⑤ Notices: 계산 결과 안내 메시지 (JS가 동적으로 채움) -->
+  <div class="sm-notices" id="notices-container" role="status" aria-label="계산 결과 안내"></div>
+
+  <!-- ⑥ 계산 과정 보기 (Phase C: step accordion, JS가 채움) -->
+  <section class="sm-card" id="steps-card" style="display:none" aria-label="계산 과정">
+    <h2 class="sm-card-title">계산 과정 보기</h2>
+    <div id="steps-list"></div>
+  </section>
+
+  <!-- ⑦ 기존 계산 상세 (steps-card 없는 계산기 폴백) -->
+  <section class="sm-card" id="detail-card" style="display:none" aria-label="계산 상세">
+    <h2 class="sm-card-title">계산 상세</h2>
+    <div id="detail-rows"></div>
+  </section>
+
+  <!-- ⑧ 안내사항 -->
+  <div class="sm-notice" role="note">
+    <span class="sm-notice-icon" aria-hidden="true">⚠️</span>
+    <span>본 계산 결과는 참고용이며, 실제 지급액은 근로계약·관련 법령에 따라 달라질 수 있습니다.</span>
+  </div>
+
+
+
+  <!-- ⑧ 본문 -->
+  <section class="sm-card sm-article">
+    <h2>필수 서류 목록</h2>
+<p><a href="https://calcmate.kr/severance-pay/" class="sm-internal-link">퇴직금 계산기</a>을 정산받기 위해 근로자가 준비해야 할 서류는 상황에 따라 다릅니다. 기본적으로 퇴직금은 사용자가 산정·지급하는 것이 원칙이므로, 근로자 측에서 별도 서류를 준비할 일은 많지 않습니다. 다만 퇴직금 미지급 시 신고하거나 정산 내역을 확인할 때 필요한 서류가 있습니다.</p>
+<table>
+<thead><tr><th>서류</th><th>필요한 경우</th><th>발급 방법</th></tr></thead>
+<tbody>
+<tr><td>근로계약서</td><td>퇴직금 산정 기준 확인 시</td><td>사업장에서 교부받음 (근로기준법 제17조)</td></tr>
+<tr><td>급여명세서 (3개월분)</td><td>평균임금 산정 시 임금 총액 확인</td><td>사업장에서 교부 요청</td></tr>
+<tr><td>퇴직증명서</td><td>퇴직 사실 확인, <a href="https://calcmate.kr/unemployment-benefit/" class="sm-internal-link">실업급여 계산기</a> 신청 시</td><td>사업장에서 발급 (고용보험법 제76조)</td></tr>
+<tr><td>원천징수영수증</td><td>퇴직소득세 신고 시</td><td>국세청 홈택스에서 확인</td></tr>
+<tr><td>IRP 계좌 정보</td><td>퇴직금 300만 원 이상 이전 시</td><td>금융회사에서 개설</td></tr>
+<tr><td>사업자등록증 사본</td><td>사업장 확인, 노동청 신고 시</td><td>사업장에서 요청</td></tr>
+</tbody>
+</table>
+
+<h2>서류 발급 방법</h2>
+<p><strong>근로계약서</strong> — 근로기준법 제17조에 따라 사용자는 근로계약 체결 시 근로자에게 근로계약서 사본을 반드시 교부해야 합니다. 분실 시 사업장 인사팀에 재교부를 요청하세요.</p>
+<p><strong>급여명세서</strong> — 근로기준법 제48조에 따라 사용자는 매월 임금 항목별 내역을 근로자에게 교부해야 합니다. 3개월분 급여명세서가 없다면 사업장에 교부를 요청하세요.</p>
+<p><strong>퇴직증명서</strong> — 퇴직 후 사업장에 요청하면 발급합니다. 실업급여 신청 시 반드시 필요하며, 고용보험 상실 신고와 함께 처리됩니다.</p>
+<p><strong>원천징수영수증</strong> — 국세청 홈택스(hometax.go.kr)에서 <a href="https://calcmate.kr/연말정산_환급액_계산기/" class="sm-internal-link">연말정산 계산기</a> 및 퇴직소득세 관련 내역을 확인할 수 있습니다. 또는 사업장에 요청하면 발급받을 수 있습니다.</p>
+
+<h2>제출 기한 및 절차</h2>
+<p>퇴직금은 퇴직일로부터 <strong>14일 이내</strong>에 지급이 원칙입니다(근로기준법 제36조). 퇴직금 정산이 지연되면 지연이자(연 20%)가 붙습니다.</p>
+<p>퇴직금 미지급 시 고용노동부에 진정을 넣을 수 있으며, 이때 근로계약서·급여명세서·퇴직증명서 등 위 서류가 증빙자료로 활용됩니다. 진정 기한은 퇴직일로부터 3년 이내입니다(근로기준법 제49조).</p>
+<p>IRP 계좌로 이전하는 경우 퇴직일로부터 3개월 이내에 해당 금융회사에 입금이 완료되어야 합니다.</p>
+
+<h2>주의사항</h2>
+<ul>
+<li><strong>퇴직 전 근로계약서·급여명세서를 반드시 확보하세요.</strong> 퇴직 후 사업장이 협조하지 않을 경우 증빙 확보가 어려워집니다.</li>
+<li><strong>퇴직증명서 발급을 거부할 수 없습니다.</strong> 근로기준법 제36조에 따라 사용자는 퇴직 증명서 발급을 거부할 수 없습니다. 거부 시 노동청에 진정할 수 있습니다.</li>
+<li><strong>IRP 계좌 개설은 퇴직 전에 미리 하세요.</strong> 퇴직금 300만 원 이상은 IRP로 이전해야 하며, 계좌가 없으면 지급이 지연됩니다.</li>
+<li><strong>퇴직소득세 신고를 잊지 마세요.</strong> 퇴직금에 대해 퇴직소득세가 부과되며, 근속연수 공제(연 400만 원 한도)가 적용됩니다. 퇴직일이 속하는 달의 다음 달 말일까지 신고해야 합니다.</li>
+</ul>
+
+<h2>FAQ</h2>
+<dl>
+<dt>퇴직금 정산에 필요한 서류가 뭐죠?</dt>
+<dd>기본적으로 근로계약서와 3개월 급여명세서입니다. 퇴직금 미지급 시 노동청 진정을 넣을 때 이 서류들이 증빙으로 활용됩니다. 퇴직증명서도 함께 준비하면 좋습니다.</dd>
+
+<dt>급여명세서를 받지 못했는데 어떻게 하나요?</dt>
+<dd>근로기준법 제48조에 따라 사용자는 매월 임금 항목별 내역을 교부해야 합니다. 미교부 시 사업장에 요청하세요. 거부 시 노동청에 진정할 수 있습니다.</dd>
+
+<dt>IRP 계좌 없이도 퇴직금을 받을 수 있나요?</dt>
+<dd>300만 원 미만이면 계좌 없이도 지급 가능합니다. 300만 원 이상은 반드시 IRP 계좌로 이전해야 하며(2022년 4월~), 퇴직 전에 미리 개설해 두세요.</dd>
+
+<dt>퇴직 후 14일이 지났는데 퇴직금을 못 받았어요.</dt>
+<dd>퇴직일로부터 14일 이내 지급이 원칙입니다(근로기준법 제36조). 지연 시 연 20% 지연이자가 붙으며, 고용노동부에 진정을 넣을 수 있습니다. 진정 기한은 퇴직일로부터 3년 이내입니다.</dd>
+</dl>
+  </section>
+
+  <!-- Phase C: 본문 중간 CTA -->
+  <div class="sm-inline-cta">
+    <p class="sm-inline-cta-title">지금 바로 퇴직금 서류 안내 계산해 보세요</p>
+    <p class="sm-inline-cta-sub">무료 · 회원가입 불필요 · 결과 즉시 확인</p>
+    <a class="sm-inline-cta-btn" href="#" onclick="window.scrollTo({top:0,behavior:'smooth'});return false;">계산 바로 하기 ↑</a>
+  </div>
+
+
+
+  <!-- ⑨ FAQ -->
+  <section class="sm-card" id="faq-card">
+    <h2 class="sm-card-title">자주 묻는 질문</h2>
+    <div id="sm-dynamic-faq"></div>
+    <div class="sm-faq-item"><button class="sm-faq-q" onclick="toggleFaq(this)">퇴직금은 얼마나 일해야 받을 수 있나요?<span class="sm-faq-icon">+</span></button><div class="sm-faq-a">동일 사업장에서 1년 이상 계속 근로하고, 주당 평균 15시간 이상 근무해야 합니다(근로자퇴직급여보장법 제8조). 1년 미만이면 퇴직금 지급 의무가 없습니다.</div></div>
+<div class="sm-faq-item"><button class="sm-faq-q" onclick="toggleFaq(this)">계산에 사용하는 「평균임금」이란 무엇인가요?<span class="sm-faq-icon">+</span></button><div class="sm-faq-a">퇴직일 이전 3개월간 지급받은 임금 총액을 그 기간 총 일수로 나눈 1일 평균임금입니다. 이 계산기에는 3개월 월평균 임금을 입력해 주세요.</div></div>
+<div class="sm-faq-item"><button class="sm-faq-q" onclick="toggleFaq(this)">계약직·파견직도 퇴직금을 받을 수 있나요?<span class="sm-faq-icon">+</span></button><div class="sm-faq-a">고용 형태와 관계없이 1년 이상 계속 근로 + 주 15시간 이상이면 받습니다. 계약 갱신으로 이어진 경우 근무 기간을 합산합니다.</div></div>
+<div class="sm-faq-item"><button class="sm-faq-q" onclick="toggleFaq(this)">퇴직금은 퇴직 후 언제까지 받을 수 있나요?<span class="sm-faq-icon">+</span></button><div class="sm-faq-a">퇴직일로부터 14일 이내 지급이 원칙입니다(근로기준법 제36조). 정당한 사유 없이 지연 시 지연이자(연 20%)가 붙습니다.</div></div>
+  </section>
+
+  <!-- ⑩ 관련 계산기 -->
+  <section class="sm-card" id="related-card">
+    <h2 class="sm-card-title">관련 계산기</h2>
+    <div class="sm-related-grid">
+      
+    </div>
+  </section>
+
+
+
+
+
+  <!-- Phase C: 페이지 하단 CTA -->
+  <div class="sm-footer-cta">
+    <p class="sm-footer-cta-title">CalcMate — 실생활 계산기 모음</p>
+    <p class="sm-footer-cta-sub">필요한 계산을 쉽고 빠르게, 한곳에서 확인하세요.</p>
+    <div class="sm-footer-cta-links">
+      <a class="sm-footer-cta-link" href="https://calcmate.kr">전체 계산기</a>
+      <a class="sm-footer-cta-link" href="https://calcmate.kr">다른 계산기 보기</a>
+    </div>
+  </div>
+
+
+  <!-- ⑫ Footer -->
+  <footer style="text-align:center;padding-top:var(--sp-3);border-top:1px solid var(--c-border);margin-top:var(--sp-3)">
+    <p style="font-size:13px;color:var(--c-text-light);margin-bottom:var(--sp-1)">본 계산기는 참고용이며 실제 지급액과 다를 수 있습니다.</p>
+    <div style="font-size:16px;font-weight:800;color:var(--c-primary);margin-bottom:var(--sp-1)">CalcMate</div>
+    <nav style="display:flex;gap:var(--sp-2);justify-content:center;flex-wrap:wrap;margin-bottom:var(--sp-1)"><a href="https://calcmate.kr/about/" style="font-size:13px;color:var(--c-text-sub);text-decoration:none">소개</a><a href="https://calcmate.kr/privacy/" style="font-size:13px;color:var(--c-text-sub);text-decoration:none">개인정보처리방침</a><a href="https://calcmate.kr/terms/" style="font-size:13px;color:var(--c-text-sub);text-decoration:none">이용약관</a><a href="https://calcmate.kr/contact/" style="font-size:13px;color:var(--c-text-sub);text-decoration:none">문의하기</a></nav>
+    <p style="font-size:12px;color:var(--c-text-light)">© 2026 CalcMate. All rights reserved.</p>
+  </footer>
+
+</div>
+
+<!-- Mobile Fixed CTA -->
+<div class="sm-mobile-cta">
+  <button class="sm-btn" type="button" onclick="calculate();setTimeout(function(){var c=document.getElementById('result-card');if(c)c.scrollIntoView({behavior:'smooth',block:'center'});},100)">
+    지금 계산하기
+  </button>
+</div>
+
+<!-- 계산기 설정(파라미터) — app_generator가 주입 -->
+<script>window.SM_CONFIG = {"name": "퇴직금 계산기 서류 안내", "slug": "severance-pay-documents", "primaryOutput": "severance_pay", "resultUnit": "원", "inputs": [{"name": "avg_monthly_wage", "label": "avg monthly wage", "type": "number", "unit": ""}, {"name": "start_date", "label": "start date", "type": "date", "unit": ""}, {"name": "end_date", "label": "end date", "type": "date", "unit": ""}], "outputs": [{"key": "severance_pay", "label": "severance pay", "unit": "원"}], "show_adsense": false, "show_cpa": false, "show_share": true, "show_pwa": false, "show_result_save": true, "show_faq": true, "show_notice": true, "show_related": true, "show_detail": true, "show_article": true, "site_mode": "pre_adsense", "result_export_type": "png", "kakao_js_key": "", "calculator_version": "2.0.0", "law_version": "2026-07", "ga4_id": "G-EP2Q8035VF"};</script>
+<script src="script.js"></script>
+</body>
+</html>

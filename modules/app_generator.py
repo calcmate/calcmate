@@ -1732,7 +1732,7 @@ def render_json_ld(calc: dict, cfg: dict = None) -> str:
         "@type": "Organization",
         "name": "CalcMate",
         "url": site_url,
-        "description": "급여·노무 계산기 모음 — 퇴직금·주휴수당·실업급여·4대보험·연말정산·육아휴직",
+        "description": "CalcMate — 실생활 계산기 모음. 필요한 계산을 쉽고 빠르게, 한곳에서 확인하세요.",
     })
 
     # ③ BreadcrumbList
@@ -1925,8 +1925,8 @@ def render_footer_cta(calc: dict, cfg: dict = None) -> str:
     site_url = str((cfg or {}).get("SITE_URL", "")).rstrip("/")
     home_url = site_url or "/"
     slug = str((calc or {}).get("slug", ""))
-    title = _FOOTER_CTA_TITLE_BY_SLUG.get(slug, "CalcMate — 급여·노무 계산기 모음")
-    sub = _FOOTER_CTA_SUB_BY_SLUG.get(slug, "퇴직금·주휴수당·실업급여·4대보험·연말정산·육아휴직까지")
+    title = _FOOTER_CTA_TITLE_BY_SLUG.get(slug, "CalcMate — 실생활 계산기 모음")
+    sub = _FOOTER_CTA_SUB_BY_SLUG.get(slug, "필요한 계산을 쉽고 빠르게, 한곳에서 확인하세요.")
     return (
         '  <!-- Phase C: 페이지 하단 CTA -->\n'
         '  <div class="sm-footer-cta">\n'
