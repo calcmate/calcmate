@@ -16,7 +16,7 @@ import re
 import uuid
 from datetime import datetime
 
-from adapters.db.factory import get_db_adapter
+from adapters.db.factory import get_db_adapter, get_calculator_storage_adapter
 from repositories.site_repository import SiteRepository
 from repositories.calculator_repository import CalculatorRepository
 from .logger import get_logger
@@ -49,8 +49,12 @@ def _slug(text: str) -> str:
 
 
 def _repos(cfg: dict):
-    db = get_db_adapter(cfg)
-    return SiteRepository(db, cfg), CalculatorRepository(db)
+    # STEP109: sites는 기존 get_db_adapter(DualAdapter, Sheets-primary)를 그대로 유지하고,
+    # calculators만 get_calculator_storage_adapter(SQLiteFirstAdapter, SQLite MAIN)로 분리한다
+    # (STEP108에서 확인된 blind spot 수정 — sites storage 정책은 변경하지 않음).
+    site_db = get_db_adapter(cfg)
+    calculator_db = get_calculator_storage_adapter(cfg)
+    return SiteRepository(site_db, cfg), CalculatorRepository(calculator_db)
 
 
 # ── 조회 ──────────────────────────────────────────────────────────
@@ -222,7 +226,8 @@ def delete_site(cfg: dict, site_id: str) -> tuple:
 
 
 def delete_calculator(cfg: dict, calc_id: str) -> tuple:
-    db = get_db_adapter(cfg)
+    # STEP109: calculators 삭제는 get_calculator_storage_adapter(SQLite MAIN)로 라우팅한다.
+    db = get_calculator_storage_adapter(cfg)
     try:
         db.delete("calculators", calc_id)
         return True, f"계산기 삭제 완료: {calc_id}"

@@ -13,7 +13,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from adapters.db.factory import get_db_adapter
+from adapters.db.factory import get_db_adapter, get_template_storage_adapter, get_calculator_storage_adapter
 from .ai_roles import make_provider
 from .logger import get_logger, BudgetTracker
 
@@ -109,11 +109,13 @@ def query_repo(cfg: dict, which: str) -> list:
         return SiteRepository(db, cfg).get_all()
     if which == "calculators":
         from repositories.calculator_repository import CalculatorRepository
-        return CalculatorRepository(db).get_all()
+        # STEP110: calculators만 SQLite MAIN(get_calculator_storage_adapter)으로 조회한다
+        # (STEP108에서 확인된 blind spot 수정 — sites/articles는 위 db(get_db_adapter)를 그대로 사용).
+        return CalculatorRepository(get_calculator_storage_adapter(cfg)).get_all()
     if which == "articles":
         from repositories.article_repository import ArticleRepository
         return ArticleRepository(db).get_all()
     if which == "templates":
         from repositories.template_repository import TemplateRepository
-        return TemplateRepository(db).get_all()
+        return TemplateRepository(get_template_storage_adapter(cfg)).get_all()
     return []
