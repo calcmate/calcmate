@@ -18,6 +18,9 @@ _ID_COL = {
     "app_templates":     "template_id",
     "app_factory_queue": "job_id",
     "app_factory_logs":  "log_id",
+    "blog_articles":     "article_id",
+    "sync_runs":         "run_id",
+    "sync_log_entries":  "entry_id",
 }
 
 
@@ -32,6 +35,12 @@ class SQLiteAdapter(AbstractDBAdapter):
         conn.row_factory = sqlite3.Row
         return conn
 
+    def _conn_ro(self):
+        """읽기 전용 연결. 순수 조회 메서드 전용 — 원본 DB 파일을 변경하지 않는다."""
+        conn = sqlite3.connect(f"file:{self._path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        return conn
+
     def _ensure_table(self, conn, table: str, row: dict):
         cols = ", ".join(f'"{k}" TEXT' for k in row.keys())
         conn.execute(f'CREATE TABLE IF NOT EXISTS "{table}" ({cols})')
@@ -43,12 +52,17 @@ class SQLiteAdapter(AbstractDBAdapter):
         conn.commit()
 
     def get_all(self, table: str) -> list[dict]:
-        with self._conn() as conn:
-            try:
-                rows = conn.execute(f'SELECT * FROM "{table}"').fetchall()
-                return [dict(r) for r in rows]
-            except sqlite3.OperationalError:
-                return []
+        try:
+            conn = self._conn_ro()
+        except sqlite3.OperationalError:
+            return []
+        try:
+            rows = conn.execute(f'SELECT * FROM "{table}"').fetchall()
+            return [dict(r) for r in rows]
+        except sqlite3.OperationalError:
+            return []
+        finally:
+            conn.close()
 
     def get_where(self, table: str, filters: dict) -> list[dict]:
         rows = self.get_all(table)
@@ -90,8 +104,11 @@ class SQLiteAdapter(AbstractDBAdapter):
 
     def read_test(self) -> bool:
         try:
-            with self._conn() as conn:
+            conn = self._conn_ro()
+            try:
                 conn.execute("SELECT 1")
+            finally:
+                conn.close()
             return True
         except Exception:
             return False
