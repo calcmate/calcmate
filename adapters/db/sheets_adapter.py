@@ -49,6 +49,8 @@ _TAB = {
     "app_templates":      "app_templates",
     "app_factory_queue":  "app_factory_queue",
     "app_factory_logs":   "app_factory_logs",
+    # IRP-23: app_templates.html_template 50,000자 초과 백업용(SQLiteFirstAdapter 전용).
+    "app_templates_html_parts": "app_templates_html_parts",
 }
 
 # 테이블별 id 컬럼명
@@ -59,6 +61,8 @@ _ID_COL = {
     "app_templates":     "template_id",
     "app_factory_queue": "job_id",
     "app_factory_logs":  "log_id",
+    # 복합키(template_id+part_no)를 단일 문자열("template_id::part_no")로 합성해 사용한다.
+    "app_templates_html_parts": "part_id",
 }
 
 _DEFAULT_CACHE_TTL = 8          # get_all TTL(초). cfg SHEETS_CACHE_TTL로 override(0이면 비활성).
