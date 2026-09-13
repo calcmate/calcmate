@@ -44,6 +44,12 @@ class _FakeTplRepo:
 def _patch_side_effects(monkeypatch, save_spy=None):
     """실제 DB/Registry/파일 쓰기를 전부 mock 처리."""
     monkeypatch.setattr(af, "get_db_adapter", lambda cfg: {"memory": True})
+    # IRP-23: app_templates 저장은 get_template_storage_adapter(cfg)를 거치므로
+    # (SQLite-원본/Sheets-백업 전용, get_db_adapter와 별개 함수) 동일하게 대역 처리한다.
+    monkeypatch.setattr(af, "get_template_storage_adapter", lambda cfg: {"memory": True})
+    # STEP93: calculators 저장은 get_calculator_storage_adapter(cfg)를 거치므로
+    # (SQLite MAIN/Sheets BACKUP 전용, get_db_adapter와 별개 함수) 동일하게 대역 처리한다.
+    monkeypatch.setattr(af, "get_calculator_storage_adapter", lambda cfg: {"memory": True})
     monkeypatch.setattr(af, "CalculatorRepository", _FakeCalcRepo)
     monkeypatch.setattr(af, "TemplateRepository", _FakeTplRepo)
     monkeypatch.setattr("modules.registry_loader.add_auto_entry", lambda *a, **k: None)
