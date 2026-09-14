@@ -14,6 +14,13 @@ from adapters.db.base import AbstractDBAdapter
 
 SYNC_METADATA_FIELDS = {"wp_status", "last_synced_at", "sync_status", "sync_error"}
 
+# update_content_fields()가 갱신 가능한 필드. slug/calculator_id/intent/content_source/
+# wp_post_id/created_at 등 신원·계약성 필드는 포함하지 않는다(생성 시점에만 결정).
+CONTENT_UPDATE_FIELDS = {
+    "title", "content", "meta_description", "wp_status", "wp_permalink",
+    "published_at", "last_synced_at", "sync_status", "sync_error",
+}
+
 
 class BlogArticleRepository:
     TABLE = "blog_articles"
@@ -69,4 +76,29 @@ class BlogArticleRepository:
         # updated_at은 이 함수의 갱신 대상이 아니므로 기존 값을 그대로 유지해 자동 변경을 막는다.
         data["updated_at"] = row.get("updated_at")
 
+        self._db.update(self.TABLE, article_id, data)
+
+    def update_content_fields(self, article_id: str, **fields) -> None:
+        """콘텐츠성 필드(title/content/meta_description 등)만 갱신한다.
+
+        update_sync_metadata()와 책임을 분리한다 — 이 메서드는 slug/calculator_id/
+        intent/content_source/wp_post_id/created_at은 절대 변경하지 않으며,
+        calculators 테이블은 어떤 경우에도 접근하지 않는다. 값이 None인 키워드
+        인자는 "갱신하지 않음"으로 취급해 무시한다(호출부가 모든 필드를 매번
+        채우지 않아도 안전하도록).
+        """
+        row = self.get_by_article_id(article_id)
+        if row is None:
+            raise ValueError(f"blog_articles에 article_id={article_id!r} 행이 없습니다.")
+
+        data = {}
+        for key, value in fields.items():
+            if value is None:
+                continue
+            if key not in CONTENT_UPDATE_FIELDS:
+                raise ValueError(f"update_content_fields()는 {CONTENT_UPDATE_FIELDS}만 허용합니다: {key}")
+            data[key] = value
+
+        if not data:
+            return
         self._db.update(self.TABLE, article_id, data)

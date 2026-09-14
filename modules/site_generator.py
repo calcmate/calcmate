@@ -267,6 +267,39 @@ def _page(title: str, description: str, css_path: str,
 
 # ── 메인 홈 페이지 ────────────────────────────────────────────────
 
+def _extra_published_blog_articles(cfg: dict) -> list[dict]:
+    """GOLDEN_10에 없는, publish 상태인 blog_articles만 골라 카드/sitemap용 최소
+    필드({slug, title, description})로 정규화한다(STEP186 — WP 자동등록 병합).
+
+    GOLDEN_10 원본 리스트는 이 함수 안에서도 읽기만 하며 절대 수정하지 않는다.
+    calculators 테이블은 조회하지 않는다. 실패해도(DB 미구성 등) 빈 리스트를
+    반환해 메인 페이지/sitemap 생성 자체가 깨지지 않도록 한다.
+    """
+    try:
+        from content.blog import GOLDEN_10
+        from adapters.db.factory import get_db_adapter
+        from repositories.blog_article_repository import BlogArticleRepository
+
+        golden10_slugs = {gc.slug for gc in GOLDEN_10}
+        rows = BlogArticleRepository(get_db_adapter(cfg)).list_all()
+    except Exception:
+        return []
+
+    extras = []
+    for row in rows:
+        slug = row.get("slug", "")
+        if not slug or slug in golden10_slugs:
+            continue
+        if row.get("wp_status") != "publish":
+            continue
+        extras.append({
+            "slug": slug,
+            "title": row.get("title", "") or slug,
+            "description": row.get("meta_description") or "",
+        })
+    return sorted(extras, key=lambda a: a["slug"])
+
+
 def generate_index(cfg: dict) -> str:
     u = cfg.get("SITE_URL", "https://calcmate.kr").rstrip("/")
     site_name = cfg.get("SITE_NAME", "CalcMate")
@@ -303,6 +336,20 @@ def generate_index(cfg: dict) -> str:
         f'</a>'
         for gc in GOLDEN_10
     )
+
+    # WP 자동등록 신규 블로그 카드(STEP186) — GOLDEN_10은 위에서 그대로 유지하고,
+    # GOLDEN_10에 없는 blog_articles(publish)만 추가한다. GOLDEN_10 카드 자체의
+    # 순서/개수/내용에는 어떤 영향도 주지 않는다(추가만, 대체 없음).
+    extra_blog_cards = "\n".join(
+        f'<a class="cm-calc-card" href="{u}/blog/{a["slug"]}/" aria-label="{_esc(a["title"])}">'
+        f'<span class="cm-calc-emoji" aria-hidden="true">📖</span>'
+        f'<div class="cm-calc-name">{_esc(a["title"])}</div>'
+        f'<div class="cm-calc-desc">{_esc(a["description"])}</div>'
+        f'</a>'
+        for a in _extra_published_blog_articles(cfg)
+    )
+    if extra_blog_cards:
+        blog_cards = blog_cards + "\n" + extra_blog_cards
 
     body = f"""
 <main>
@@ -620,7 +667,15 @@ def generate_sitemap(cfg: dict) -> str:
     from content.blog import GOLDEN_10
     blog_entries = [(f"/blog/{gc.slug}/", "0.7", "monthly") for gc in GOLDEN_10]
 
-    all_entries = static_pages + calc_entries + blog_entries
+    # WP 자동등록 신규 블로그 글(STEP186) — GOLDEN_10 URL은 위에서 그대로 유지하고,
+    # GOLDEN_10에 없는 slug만 추가한다(중복 URL 방지는 _extra_published_blog_articles가
+    # GOLDEN_10 slug를 이미 제외하므로 여기서 추가 중복 제거가 필요 없다).
+    extra_blog_entries = [
+        (f"/blog/{a['slug']}/", "0.7", "monthly")
+        for a in _extra_published_blog_articles(cfg)
+    ]
+
+    all_entries = static_pages + calc_entries + blog_entries + extra_blog_entries
 
     items = "\n".join(
         f"  <url>"
