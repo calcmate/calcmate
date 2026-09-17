@@ -319,6 +319,131 @@ def check_g_style_plus(body_html: str) -> list[dict]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G-AI-LINK : AI 본문 내 링크 삽입 검출 (STEP150)
+# ═══════════════════════════════════════════════════════════════════════════
+# run_integrity_gates()는 build_blog_html() 호출 이전의 raw article만 이 함수에
+# 전달한다(content/blog/writer.py::auto_generate_blog_all() 순서 확인됨) — 따라서
+# build_blog_html()이 이후 단계에서 코드로 삽입하는 CTA/기관 공식 링크는 이 시점에는
+# 아직 본문에 존재하지 않아, 검사 대상과 시점상 자동으로 분리된다.
+
+_HTML_A_TAG_RE = re.compile(r"<a[\s>]", re.I)
+_MD_LINK_RE = re.compile(r"\[[^\]\n]+\]\(\s*(?:https?://|/)[^)\s]+\)")
+# <a>/Markdown 링크로 감싸이지 않은 순수 텍스트 URL 언급 — 정상 문장과 구분이
+# 어려워 major가 아닌 minor(WARN)로만 표시한다.
+_BARE_URL_RE = re.compile(r"https?://[^\s<>\"')]+")
+
+
+def check_g_ai_link(body_html: str) -> list[dict]:
+    """AI가 작성한 raw 본문에 링크가 없는지 검사한다("AI 본문에는 링크가 없어야
+    한다"는 _NO_LINK_RULE을 코드로 강제). <a> 태그·Markdown 링크는 명백한 위반이므로
+    major(BLOCK). 태그/Markdown 문법 없이 텍스트로만 등장하는 URL은 major로 단정하기
+    애매해 minor(WARN)로만 남긴다."""
+    fails: list[dict] = []
+
+    a_hits = _HTML_A_TAG_RE.findall(body_html)
+    if a_hits:
+        fails.append({
+            "gate": "G-AI-LINK",
+            "grade": "major",
+            "detail": f"AI 본문에 <a> 태그 {len(a_hits)}건 — 링크는 시스템이 자동 삽입하므로 AI가 작성하면 안 됨",
+        })
+
+    md_hits = _MD_LINK_RE.findall(body_html)
+    if md_hits:
+        fails.append({
+            "gate": "G-AI-LINK",
+            "grade": "major",
+            "detail": f"AI 본문에 Markdown 링크 {len(md_hits)}건: {md_hits[:3]}",
+        })
+
+    if not a_hits and not md_hits:
+        bare = _BARE_URL_RE.findall(body_html)
+        if bare:
+            fails.append({
+                "gate": "G-AI-LINK",
+                "grade": "minor",
+                "detail": f"본문에 URL 문자열 언급 {len(bare)}건(태그/Markdown 형태 아님, 확인 필요): {bare[:3]}",
+            })
+
+    return fails
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# G-HTML-CLEAN : AI 본문 HTML/Markdown 오염 검출 (STEP150)
+# ═══════════════════════════════════════════════════════════════════════════
+# 참고: modules/cleaner.py::strip_prompt_artifacts()/normalize_bold_markdown()가
+# generate_article() 내부에서 이미 같은 종류의 오염(프롬프트 지시어 헤딩, 번호
+# prefix, **bold**)을 본문에서 조용히 제거한다 — 즉 이 게이트가 받는 body_html은
+# 이미 1차 정제를 거친 상태다. 아래 검사는 그 정제가 놓친 잔여 패턴을 잡아내는
+# 안전망이며, cleaner의 정확 일치 정규식보다 다소 넓게(레이블 뒤 텍스트가 붙은
+# 경우도 포함) 검사해 실질적인 2차 방어 효과를 갖도록 했다. placeholder/Markdown
+# heading/코드펜스/문서 wrapper 태그는 cleaner.py가 다루지 않는 영역이라 이 게이트가
+# 유일한 방어선이다.
+
+_PROMPT_ARTIFACT_HEADING_RE = re.compile(
+    r"<h[23][^>]*>[^<]*(?:CTA|행동\s*유도|할인\s*혜택|계산기\s*연결)[^<]*</h[23]>",
+    re.I,
+)
+_NUMBERED_HEADING_RE = re.compile(r"<h[23][^>]*>\s*\d+[\.\)]\s+", re.I)
+_PLACEHOLDER_RE = re.compile(r"\{\{[^}]+\}\}|data-ph\s*=\s*\"")
+_MD_HEADING_RE = re.compile(r"(?m)^\s{0,3}#{1,6}\s+\S")
+_CODE_FENCE_RE = re.compile(r"```")
+_DOC_WRAPPER_RE = re.compile(r"<(?:html|body|!DOCTYPE)\b", re.I)
+
+
+def check_g_html_clean(body_html: str) -> list[dict]:
+    """AI 본문에 프롬프트 지시어 노출·미치환 placeholder·Markdown 잔여 문법이
+    없는지 검사한다. 명백한 패턴만 major(BLOCK)로 판정하며, 오탐 소지가 있는
+    패턴(일반 괄호·정상 수식·해시태그형 '#단어' 등)은 이번 STEP에서 규칙에
+    포함하지 않았다. Markdown 링크([텍스트](URL))는 G-AI-LINK가 이미 검사하므로
+    여기서 중복 판정하지 않는다."""
+    fails: list[dict] = []
+
+    artifact_hits = (_PROMPT_ARTIFACT_HEADING_RE.findall(body_html)
+                     + _NUMBERED_HEADING_RE.findall(body_html))
+    if artifact_hits:
+        fails.append({
+            "gate": "G-HTML-CLEAN",
+            "grade": "major",
+            "detail": f"프롬프트 지시어/번호 prefix가 H2·H3 제목에 노출 {len(artifact_hits)}건",
+        })
+
+    ph_hits = _PLACEHOLDER_RE.findall(body_html)
+    if ph_hits:
+        fails.append({
+            "gate": "G-HTML-CLEAN",
+            "grade": "major",
+            "detail": f"미치환 placeholder {len(ph_hits)}건: {ph_hits[:3]}",
+        })
+
+    md_heading_hits = _MD_HEADING_RE.findall(body_html)
+    if md_heading_hits:
+        fails.append({
+            "gate": "G-HTML-CLEAN",
+            "grade": "major",
+            "detail": f"Markdown heading(#) 잔여 {len(md_heading_hits)}건",
+        })
+
+    code_fence_hits = _CODE_FENCE_RE.findall(body_html)
+    if code_fence_hits:
+        fails.append({
+            "gate": "G-HTML-CLEAN",
+            "grade": "major",
+            "detail": f"Markdown 코드펜스(```) 잔여 {len(code_fence_hits)}건",
+        })
+
+    doc_wrapper_hits = _DOC_WRAPPER_RE.findall(body_html)
+    if doc_wrapper_hits:
+        fails.append({
+            "gate": "G-HTML-CLEAN",
+            "grade": "major",
+            "detail": f"불필요한 문서 wrapper 태그 잔존: {doc_wrapper_hits[:3]}",
+        })
+
+    return fails
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # G-LEGAL-CURRENT : 법정수치 최신성 검사 (SSOT 대조)
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -680,6 +805,8 @@ def check_g_h2_structure(body_html: str, intent: str | None) -> list[dict]:
 _ALL_GATES = {
     "G-CALC", "G-NUMCON", "G-LEGAL", "G-STYLE+",
     "G-LEGAL-CURRENT", "G-CONSISTENCY", "G-H2",
+    # STEP150
+    "G-AI-LINK", "G-HTML-CLEAN",
 }
 
 
@@ -701,6 +828,8 @@ def run_integrity_gates(
     all_failed.extend(check_g_legal_current(body_html, slug, intent=intent))
     all_failed.extend(check_g_consistency(body_html, slug=slug))
     all_failed.extend(check_g_h2_structure(body_html, intent))
+    all_failed.extend(check_g_ai_link(body_html))
+    all_failed.extend(check_g_html_clean(body_html))
 
     failed_names = {f["gate"] for f in all_failed}
     passed = sorted(_ALL_GATES - failed_names)
