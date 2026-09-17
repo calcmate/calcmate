@@ -799,6 +799,60 @@ def check_g_h2_structure(body_html: str, intent: str | None) -> list[dict]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G-HEALTH-DISCLAIMER : health_metric 전용 안전 고지 존재 검사 (STEP156, P1-D)
+# ═══════════════════════════════════════════════════════════════════════════
+# STEP155에서 확정한 정책: "위험 표현(진단/확정 등) 탐지"는 부정문(예: "진단하는
+# 도구가 아닙니다")까지 오탐하는 근본적 한계가 있어 채택하지 않는다. 대신 "안전
+# 고지가 존재하는가"만 결정론적으로 확인한다 — 부재(존재하지 않음)를 근거로 WARN할
+# 뿐, 특정 단독 키워드(건강/질병/진단/위험/비만 등) 존재만으로 판정하지 않는다.
+# intent == "health_metric"에만 적용되며, 그 외 intent는 항상 no-op이다.
+
+# 1) 참고용/보조지표 계열 — "참고용" 자체, 또는 "단순한 지표...함께 고려/판단" 조합
+#    (Draft585 실제 표현 "BMI는 단순한 지표일 뿐, ...다른 건강 지표와 함께 고려하는
+#    것이 좋습니다"이 이 패턴으로 PASS 처리됨을 실측 확인).
+_HEALTH_DISCLAIMER_REFERENCE_RE = re.compile(
+    r"참고\s*(용|만|자료|지표)|단순한\s*지표.{0,80}(함께|고려|판단)|보조\s*지표"
+)
+# 2) 비진단 계열 — "진단(하는 도구가) 아닙니다/할 수 없습니다", "단정할 수 없습니다" 등.
+#    "아닙니다"는 활용형 축약으로 "아니"가 아니라 "아닙"으로 시작하므로(아니다→아닙니다)
+#    두 형태를 모두 포함한다.
+_HEALTH_DISCLAIMER_NON_DIAGNOSTIC_RE = re.compile(
+    r"진단[^.]{0,15}(아니|아닙|불가|어렵)|진단할\s*수\s*없|단정[^.]{0,10}(아니|아닙|할\s*수\s*없|어렵)"
+)
+# 3) 전문가 상담 계열 — "전문가/의사/의료진/병원 ... 상담/진료/방문"
+_HEALTH_DISCLAIMER_EXPERT_RE = re.compile(
+    r"(전문가|의사|의료진|병원).{0,10}(상담|진료|방문)"
+)
+
+
+def check_g_health_disclaimer(body_html: str, intent: str | None = None) -> list[dict]:
+    """health_metric 콘텐츠에 안전 고지(참고용/비진단/전문가 상담 중 하나)가
+    있는지 검사한다. intent가 health_metric이 아니면 항상 no-op. 안전 고지가
+    하나라도 발견되면 PASS([]), 전혀 없으면 minor(WARN)만 반환한다 — 이번 STEP
+    범위에서는 critical/major로 절대 승격하지 않는다."""
+    if intent != "health_metric":
+        return []
+
+    text = _strip_html(body_html)
+    has_disclaimer = bool(
+        _HEALTH_DISCLAIMER_REFERENCE_RE.search(text)
+        or _HEALTH_DISCLAIMER_NON_DIAGNOSTIC_RE.search(text)
+        or _HEALTH_DISCLAIMER_EXPERT_RE.search(text)
+    )
+    if has_disclaimer:
+        return []
+
+    return [{
+        "gate": "G-HEALTH-DISCLAIMER",
+        "grade": "minor",
+        "detail": (
+            "health_metric 콘텐츠에 안전 고지(참고용/보조지표, 비진단, 전문가 상담 권고 중 "
+            "어느 것도)가 발견되지 않음(경고, 발행 차단 아님)"
+        ),
+    }]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # 통합 실행 함수
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -807,6 +861,8 @@ _ALL_GATES = {
     "G-LEGAL-CURRENT", "G-CONSISTENCY", "G-H2",
     # STEP150
     "G-AI-LINK", "G-HTML-CLEAN",
+    # STEP156
+    "G-HEALTH-DISCLAIMER",
 }
 
 
@@ -830,6 +886,7 @@ def run_integrity_gates(
     all_failed.extend(check_g_h2_structure(body_html, intent))
     all_failed.extend(check_g_ai_link(body_html))
     all_failed.extend(check_g_html_clean(body_html))
+    all_failed.extend(check_g_health_disclaimer(body_html, intent=intent))
 
     failed_names = {f["gate"] for f in all_failed}
     passed = sorted(_ALL_GATES - failed_names)
