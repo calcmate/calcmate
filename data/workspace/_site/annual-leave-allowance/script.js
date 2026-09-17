@@ -264,7 +264,56 @@
   var CFG = w.SM_CONFIG || {};
 
   function num(v) { return (typeof v === "number") ? v : (parseFloat(String(v).replace(/,/g, "")) || 0); }
-  function comma(n) { return (Math.round(n) + 0).toLocaleString(); }
+  // STEP 28-6: Math.round(-0.4) 등에서 나오는 -0이 그대로 "-0"으로 표시되는 것을 방지
+  // (-0 + 0 === 0, toLocaleString()은 부호까지 그대로 반영하므로 +0으로 정규화 필요).
+  // STEP 28-149: decimals 생략(기존 계산기 전부 해당)이면 이전과 완전히 동일한
+  // 정수 표시를 유지한다. decimals>0인 계산기(현재 BMI만 해당)만 pyRound()로
+  // 반올림한 뒤 최대 decimals자리까지 표시한다(37.5처럼 후행 0은 강제하지 않음 —
+  // 기존 BMI Contract test_cases가 이미 이 형식을 전제로 확정돼 있다).
+  function comma(n, decimals) {
+    if (!decimals) return (Math.round(n) + 0).toLocaleString();
+    var r = pyRound(n, decimals) + 0;
+    return r.toLocaleString(undefined, { maximumFractionDigits: decimals });
+  }
+
+  // STEP 28-140: Python round(x, N)을 계산기 formula에서 그대로 옮기면 JS Math.round()가
+  // 두 번째 인자(자릿수)를 조용히 무시해 소수점이 사라진다(_to_js()가 round(x,N)을
+  // pyRound(x,N) 호출로 바꿔 여기로 연결한다 — modules/app_generator.py 참고).
+  // Math.round(value * 10**digits) / 10**digits 방식은 채택하지 않는다 — 곱셈이
+  // 이진 부동소수점 오차를 그대로 증폭시켜 pyRound(1.005, 2)가 1.01이 아니라 1이
+  // 되는 등 잘 알려진 경계값 오류가 있다. 대신 숫자를 10진 문자열로 바꾼 뒤
+  // 지수 표기("1.005e2")로 소수점을 옮겨 다시 파싱한다 — JS 엔진이 10진 리터럴에서
+  // 직접 이진 근사값을 구하므로 곱셈 방식보다 원래 값에 더 가깝게 반올림된다.
+  // 정책: JS Math.round()와 동일하게 0.5는 항상 양의 무한대 방향으로 반올림한다
+  // (Python의 round-half-to-even과 다를 수 있음 — 대부분의 소수 리터럴은 이진수로
+  // 정확히 .5가 아니므로 실제로는 거의 항상 일치하지만, 완전히 동일하다고 가정하지
+  // 않는다. 계산기 도메인의 재무/측정값에서 정확히 .5 tie가 문제되는 사례는
+  // 현재 없음 — STEP 28-140 진단 기준).
+  function pyRound(value, digits) {
+    digits = digits || 0;
+    if (typeof value !== "number" || !isFinite(value)) return value;
+    var shifted = Number(value.toString() + "e" + digits);
+    if (!isFinite(shifted)) return value; // 극단적 자릿수/크기 방어(안전 폴백)
+    var rounded = Math.round(shifted);
+    return Number(rounded.toString() + "e" + (-digits));
+  }
+
+  // STEP 28-136: calculate()의 기존 가드(!isFinite(num(outputs[CFG.primaryOutput])))는
+  // primaryOutput 한 필드만 검사한다. renderResult()는 CFG.outputs 전체(다중 출력)를
+  // 화면에 렌더링하므로, primaryOutput이 아닌 다른 출력 필드가 NaN/Infinity/-Infinity가
+  // 되면 가드를 통과해 그대로("NaN원", "∞" 등) 화면에 노출될 수 있다. 이 함수는 그
+  // 간극을 메우는 순수 안전성 검사로, 특정 계산기의 Validation 정책이 아니라
+  // outputs object 전체(문자열/배열/notices 등은 건드리지 않고 숫자 타입 값만)를
+  // 대상으로 하는 계산기 공통 방어다.
+  function _hasNonFiniteNumericOutput(outputs) {
+    for (var k in outputs) {
+      if (Object.prototype.hasOwnProperty.call(outputs, k) &&
+          typeof outputs[k] === "number" && !isFinite(outputs[k])) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
@@ -272,27 +321,35 @@
     });
   }
 
-  // 입력 수집: number → 숫자(콤마제거), date → 문자열
+  // 입력 수집: number → 숫자(콤마제거), date → 문자열, boolean(checkbox) → 1/0
   function collectInputs() {
     var inputs = {};
     (CFG.inputs || []).forEach(function (f) {
       var el = d.getElementById("in_" + f.name);
       if (!el) { inputs[f.name] = (f.type === "date") ? "" : 0; return; }
+      // STEP 28-11: checkbox는 value가 아니라 checked로 상태를 판정해야 하며,
+      // 값은 기존 computeResult()가 기대하는 1(적용)/0(미적용)으로 넘긴다.
+      if (f.type === "boolean") { inputs[f.name] = el.checked ? 1 : 0; return; }
       inputs[f.name] = (f.type === "date") ? el.value : num(el.value);
     });
     return inputs;
   }
 
   // 카운트업 애니메이션 (디자인 유지)
-  function countUp(el, target) {
+  // STEP 28-6: requestAnimationFrame은 배경 탭에서 스로틀/정지될 수 있어(Chrome 표준 동작),
+  // 애니메이션 시작 전에 최종값을 먼저 동기적으로 표시한다 — rAF가 전혀 돌지 않아도
+  // "0"/"-0"에 고착되지 않고 항상 정답이 남아있도록 하는 안전장치. rAF가 정상 동작하면
+  // 이 즉시값은 같은 틱에서 애니메이션 시작 프레임(0)으로 바로 덮어써지므로 화면상
+  // 기존 카운트업 효과는 그대로 유지된다.
+  function countUp(el, target, decimals) {
     if (!el) return;
-    el.textContent = comma(target);
+    el.textContent = comma(target, decimals);
     var dur = 600, start;
     function step(now) {
       if (start === undefined) start = now;
       var p = Math.min((now - start) / dur, 1);
       var ease = 1 - Math.pow(1 - p, 3);
-      el.textContent = comma(ease * target);
+      el.textContent = comma(ease * target, decimals);
       if (p < 1) requestAnimationFrame(step);
     }
     requestAnimationFrame(step);
@@ -372,6 +429,105 @@
     if (ans) ans.hidden = !isOpen;
   };
 
+  // STEP 28-157: BMI 전용 개인화 판정 등급(대한비만학회 2018 기준, 명확한 비교
+  // 연산만 사용 — 경계 임의 보정 없음). registry/Contract/DB output_schema에
+  // 새 필드를 추가하지 않고 out.bmi 값으로부터 화면 표시 전용으로 파생한다.
+  // BMI slug에만 적용되며 다른 계산기의 renderResult() 동작에는 전혀 관여하지 않는다.
+  function _bmiGrade(bmi) {
+    if (bmi < 18.5) return "저체중";
+    if (bmi < 23) return "정상체중";
+    if (bmi < 25) return "비만전단계";
+    if (bmi < 30) return "1단계 비만";
+    if (bmi < 35) return "2단계 비만";
+    return "3단계 비만";
+  }
+
+  function _renderBmiGrade(outputs) {
+    if (CFG.slug !== "bmi-calculator") return;
+    var bmi = num(outputs.bmi);
+    if (!isFinite(bmi)) return;
+    var el = d.getElementById("bmi-grade");
+    if (!el) {
+      var host = d.getElementById("result-formula");
+      if (!host || !host.parentNode) return;
+      el = d.createElement("div");
+      el.id = "bmi-grade";
+      el.className = "sm-result-sub";
+      host.parentNode.insertBefore(el, host.nextSibling);
+    }
+    el.textContent = "판정: " + _bmiGrade(bmi);
+  }
+
+  // STEP 28-165: BMI 전용 적정 체중 범위. 정상체중 기준(18.5≤BMI<23) 중
+  // 화면 표시 상한은 22.9를 사용한다(175cm → 56.7kg~70.1kg 예시와 일치).
+  // weight_kg/out.bmi와 무관하게 height_cm만으로 항상 파생 가능하므로
+  // inputs(=renderResult의 첫 번째 인자, collectInputs() 결과)만 사용한다.
+  // 반올림/표시 형식은 기존 pyRound()/comma()를 그대로 재사용 — 새 반올림
+  // 로직을 만들지 않는다. registry/Contract/DB output_schema 미변경.
+  function _renderBmiWeightRange(inputs) {
+    if (CFG.slug !== "bmi-calculator") return;
+    var h = num(inputs && inputs.height_cm);
+    if (!isFinite(h) || h <= 0) return;
+    var hm = h / 100;
+    var minW = 18.5 * hm * hm;
+    var maxW = 22.9 * hm * hm;
+    var el = d.getElementById("bmi-weight-range");
+    if (!el) {
+      var host = d.getElementById("bmi-grade");
+      if (!host || !host.parentNode) return;
+      el = d.createElement("div");
+      el.id = "bmi-weight-range";
+      el.className = "sm-result-sub";
+      host.parentNode.insertBefore(el, host.nextSibling);
+    }
+    el.textContent = "적정 체중: " + comma(minW, 1) + "kg ~ " + comma(maxW, 1) + "kg";
+  }
+
+  // STEP 28-166: BMI 전용 6단계 시각 게이지(대한비만학회 2018 기준과 동일한
+  // 경계값). 표시 범위는 BMI 15~40으로 고정하고, marker 위치는 반드시
+  // 0~100%로 clamp한다(15 미만은 0%, 40 초과는 100%). 공유 CSS 파일은
+  // 건드리지 않고 인라인 스타일만 사용 — 다른 계산기에는 아무 영향이 없다.
+  function _renderBmiGauge(outputs) {
+    if (CFG.slug !== "bmi-calculator") return;
+    var bmi = num(outputs.bmi);
+    if (!isFinite(bmi)) return;
+    var GMIN = 15, GMAX = 40;
+    var pct = (bmi - GMIN) / (GMAX - GMIN) * 100;
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+
+    var wrap = d.getElementById("bmi-gauge");
+    if (!wrap) {
+      var host = d.getElementById("bmi-weight-range") || d.getElementById("bmi-grade");
+      if (!host || !host.parentNode) return;
+      wrap = d.createElement("div");
+      wrap.id = "bmi-gauge";
+      wrap.style.cssText = "position:relative;margin-top:12px;padding-top:10px;";
+      var bar = d.createElement("div");
+      bar.style.cssText = "display:flex;width:100%;height:8px;border-radius:4px;overflow:hidden;";
+      // 저체중/정상체중/비만전단계/1·2·3단계 비만 — 경계값(18.5/23/25/30/35)을
+      // BMI 15~40 범위 기준 폭(%)으로 환산: 14/18/8/20/20/20.
+      var segs = [
+        [14, "#93C5FD"], [18, "#4ADE80"], [8, "#FBBF24"],
+        [20, "#FB923C"], [20, "#F87171"], [20, "#DC2626"]
+      ];
+      segs.forEach(function (s) {
+        var seg = d.createElement("div");
+        seg.style.cssText = "flex:0 0 " + s[0] + "%;background:" + s[1] + ";";
+        bar.appendChild(seg);
+      });
+      wrap.appendChild(bar);
+      var marker = d.createElement("div");
+      marker.id = "bmi-gauge-marker";
+      marker.style.cssText = "position:absolute;top:0;width:4px;height:16px;"
+        + "background:#1E293B;border-radius:2px;transform:translateX(-50%);";
+      wrap.appendChild(marker);
+      host.parentNode.insertBefore(wrap, host.nextSibling);
+    }
+    var markerEl = d.getElementById("bmi-gauge-marker");
+    if (markerEl) markerEl.style.left = pct + "%";
+  }
+
   // 결과 UI 렌더 (계산 로직 없음 — 표시만)
   function renderResult(inputs, outputs) {
     outputs = outputs || {};
@@ -383,11 +539,18 @@
     // 결과 카드 내 모든 출력 요소(primary + 추가 출력)를 countUp으로 업데이트
     (CFG.outputs || []).forEach(function(o) {
       var el = d.getElementById("out_" + o.key);
-      if (el) countUp(el, num(outputs[o.key]));
+      if (el) countUp(el, num(outputs[o.key]), o.decimals);
     });
 
     var sub = d.getElementById("result-formula");
     if (sub) sub.textContent = outputs._formula || "";
+
+    // STEP 28-157: BMI 전용 판정 등급(slug 조건부, 다른 계산기는 즉시 return)
+    _renderBmiGrade(outputs);
+    // STEP 28-165: BMI 전용 적정 체중 범위(slug 조건부, 다른 계산기는 즉시 return)
+    _renderBmiWeightRange(inputs);
+    // STEP 28-166: BMI 전용 시각 게이지(slug 조건부, 다른 계산기는 즉시 return)
+    _renderBmiGauge(outputs);
 
     var actions = d.getElementById("result-actions");
     if (actions) actions.classList.add("show");
@@ -529,7 +692,7 @@
     try {
       outputs = (typeof w.computeResult === "function") ? w.computeResult(inputs) : null;
     } catch (e) { console.error(e); outputs = null; }
-    if (!outputs || !isFinite(num(outputs[CFG.primaryOutput]))) {
+    if (!outputs || !isFinite(num(outputs[CFG.primaryOutput])) || _hasNonFiniteNumericOutput(outputs)) {
       var errEl = d.getElementById("calc-error");
       if (!errEl) {
         errEl = d.createElement("p");
@@ -571,6 +734,10 @@
 
   w.calculate = calculate;
   w.smRenderResult = renderResult;
+  // STEP 28-140: 계산기별 생성 코드(이 IIFE 바깥 전역 스코프에서 정의되는
+  // computeResult 함수)가 pyRound()를 호출해야 하므로 명시적으로 전역에
+  // 노출한다(기존 calculate/smRenderResult와 동일한 export 방식).
+  w.pyRound = pyRound;
   if (d.readyState === "loading") d.addEventListener("DOMContentLoaded", init);
   else init();
 })(window, document);

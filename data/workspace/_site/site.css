@@ -48,6 +48,13 @@ a:hover{text-decoration:underline}
   transition:background .15s,transform .1s}
 .cm-hero-btn:hover{background:var(--c-primary-dark);text-decoration:none;transform:translateY(-1px)}
 
+/* ── 블로그 글 → 계산기 CTA(STEP 16-B) ── */
+.cm-blog-cta{display:inline-flex;align-items:center;gap:6px;margin-top:var(--sp-2);
+  padding:10px 20px;background:var(--c-primary);color:#fff;
+  border-radius:var(--r-btn);font-size:14px;font-weight:700;
+  text-decoration:none;transition:background .15s}
+.cm-blog-cta:hover{background:var(--c-primary-dark);text-decoration:none}
+
 /* ── 섹션 헤더 ── */
 .cm-section{padding:var(--sp-4) 0 0}
 .cm-section-title{font-size:20px;font-weight:800;letter-spacing:-.4px;
