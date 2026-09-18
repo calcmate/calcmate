@@ -799,6 +799,143 @@ def check_g_h2_structure(body_html: str, intent: str | None) -> list[dict]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G-FAQ-DUP : calculator FAQ ↔ 블로그 FAQ 완전동일 쌍 검출 (STEP153, P1-C)
+# ═══════════════════════════════════════════════════════════════════════════
+# STEP152에서 확정한 설계: "전체 세트 완전동일" 대신 "질문+답변 쌍 단위 완전동일
+# 개수/비율"을 기준으로 삼는다(bmi-calculator 실측 5/6 사례가 "전체 세트" 기준으로는
+# 놓치는 것을 STEP152에서 확인함). 비교는 공백/줄바꿈/HTML entity 정도의 최소
+# 정규화만 거친 결정론적 문자열 비교이며, 의미 유사도·임베딩·LLM은 사용하지 않는다.
+# 초기 정책은 항상 minor(WARN) — critical/major로 승격하지 않는다(STEP151/152 결론).
+
+import html as _html_mod
+
+
+def _faq_norm(s: str) -> str:
+    """공백/줄바꿈/HTML entity만 정규화한다(단어·문장 자체는 절대 바꾸지 않음)."""
+    s = _html_mod.unescape(s or "")
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _extract_body_faq_pairs(body_html: str) -> list[tuple[str, str]]:
+    """본문의 <dt>질문</dt><dd>답변</dd> 쌍을 추출해 정규화한다."""
+    raw_pairs = re.findall(r"<dt[^>]*>(.*?)</dt>\s*<dd[^>]*>(.*?)</dd>", body_html or "", re.S | re.I)
+    out = []
+    for q, a in raw_pairs:
+        q_text = _faq_norm(_strip_html(q))
+        a_text = _faq_norm(_strip_html(a))
+        if q_text and a_text:
+            out.append((q_text, a_text))
+    return out
+
+
+def _extract_calculator_faq_pairs(calculator_faq: list | None) -> list[tuple[str, str]]:
+    """calculator_faq(DB calculators.faq 파싱 결과)를 정규화한다.
+    스키마 두 가지({"question","answer"} / {"q","a"})를 모두 지원한다(STEP152 확인)."""
+    if not calculator_faq:
+        return []
+    out = []
+    for item in calculator_faq:
+        if not isinstance(item, dict):
+            continue
+        q = item.get("question") or item.get("q") or ""
+        a = item.get("answer") or item.get("a") or ""
+        q_text = _faq_norm(q)
+        a_text = _faq_norm(a)
+        if q_text and a_text:
+            out.append((q_text, a_text))
+    return out
+
+
+def measure_faq_duplicate_qa(body_html: str) -> dict:
+    """FAQ exact-copy 품질 metric을 계산한다.
+
+    본문↔FAQ와 동일 글 내부 FAQ↔FAQ만 측정하며 의미 유사도나 threshold를 사용하지
+    않는다. 결과는 QA-only 용도이고 기존 integrity gate의 passed/failed 결과에
+    포함되지 않는다.
+    """
+    faq_pairs = _extract_body_faq_pairs(body_html)
+    faq_start = re.search(r"<h2[^>]*>\s*FAQ\s*</h2>", body_html or "", re.I)
+    body_html_without_faq = body_html[:faq_start.start()] if faq_start else (body_html or "")
+
+    raw_blocks = re.findall(
+        r"<(?:p|li)[^>]*>(.*?)</(?:p|li)>",
+        body_html_without_faq,
+        re.S | re.I,
+    )
+    body_paragraphs = [_faq_norm(_strip_html(block)) for block in raw_blocks]
+    body_paragraphs = [text for text in body_paragraphs if text]
+    body_sentences = []
+    for paragraph in body_paragraphs:
+        body_sentences.extend(
+            part.strip() for part in re.split(r"(?<=[.!?。！？])\s+", paragraph)
+            if part.strip()
+        )
+
+    faq_texts = [text for pair in faq_pairs for text in pair if text]
+    sentence_matches = sum(text in body_sentences for text in faq_texts)
+    paragraph_matches = sum(text in body_paragraphs for text in faq_texts)
+
+    seen: set[tuple[str, str]] = set()
+    internal_matches = 0
+    for pair in faq_pairs:
+        if pair in seen:
+            internal_matches += 1
+        else:
+            seen.add(pair)
+
+    return {
+        "gate": "FAQ_DUP_QA_WARNING",
+        "body_faq_exact_sentence_matches": sentence_matches,
+        "body_faq_exact_paragraph_matches": paragraph_matches,
+        "faq_internal_exact_pair_matches": internal_matches,
+        "cross_post_exact_pair_matches": 0,
+        "severity": "minor",
+        "blocking": False,
+    }
+
+
+def check_g_faq_dup(body_html: str, calculator_faq: list | None = None) -> list[dict]:
+    """블로그 FAQ와 calculator 자체 FAQ의 질문+답변 쌍 완전동일 개수를 검사한다.
+
+    calculator_faq가 없거나(None) 비어 있으면, 혹은 본문에 FAQ 쌍이 하나도 없으면
+    비교할 대상이 없으므로 no-op([])이다. 순서는 비교에 영향을 주지 않는다
+    (multiset 방식으로 매칭해 순서 변경/중복 항목도 정확히 처리한다).
+
+    초기 정책: 완전동일 쌍이 1개 이상이면 항상 minor(WARN)만 반환한다 —
+    critical/major로 절대 승격하지 않는다(STEP151/152 결론, 이번 STEP 범위 고정).
+    """
+    calc_pairs = _extract_calculator_faq_pairs(calculator_faq)
+    if not calc_pairs:
+        return []
+
+    body_pairs = _extract_body_faq_pairs(body_html)
+    if not body_pairs:
+        return []
+
+    # multiset 교집합: 순서 무관, 동일 쌍이 여러 번 등장해도 중복 개수만큼만 매칭
+    remaining = list(calc_pairs)
+    dup_count = 0
+    for pair in body_pairs:
+        if pair in remaining:
+            remaining.remove(pair)
+            dup_count += 1
+
+    if dup_count == 0:
+        return []
+
+    total = len(body_pairs)
+    ratio = dup_count / total if total else 0.0
+    return [{
+        "gate": "G-FAQ-DUP",
+        "grade": "minor",
+        "detail": (
+            f"블로그 FAQ와 calculator FAQ 완전동일 쌍 {dup_count}/{total}개"
+            f"({ratio*100:.0f}%) — calculator 페이지와 동일한 FAQ가 재사용됨(경고, 발행 차단 아님)"
+        ),
+    }]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # G-HEALTH-DISCLAIMER : health_metric 전용 안전 고지 존재 검사 (STEP156, P1-D)
 # ═══════════════════════════════════════════════════════════════════════════
 # STEP155에서 확정한 정책: "위험 표현(진단/확정 등) 탐지"는 부정문(예: "진단하는
@@ -861,6 +998,8 @@ _ALL_GATES = {
     "G-LEGAL-CURRENT", "G-CONSISTENCY", "G-H2",
     # STEP150
     "G-AI-LINK", "G-HTML-CLEAN",
+    # STEP153
+    "G-FAQ-DUP",
     # STEP156
     "G-HEALTH-DISCLAIMER",
 }
@@ -871,10 +1010,15 @@ def run_integrity_gates(
     slug: str | None = None,
     example_context: dict | None = None,
     intent: str | None = None,
+    calculator_faq: list | None = None,
 ) -> tuple[list[str], list[dict]]:
     """
     모든 정합성 게이트 실행.
     Returns: (passed_gate_names, failed_gate_dicts)
+
+    calculator_faq: STEP153 추가 — calculators.faq 원본 파싱 결과(리스트). 생략(None) 시
+    G-FAQ-DUP은 기존과 동일하게 no-op이며 그 외 8개 게이트 동작은 전혀 변하지 않는다
+    (완전 하위호환, 기존 호출부는 수정 없이도 그대로 동작).
     """
     all_failed: list[dict] = []
     all_failed.extend(check_g_numcon(body_html))
@@ -886,6 +1030,7 @@ def run_integrity_gates(
     all_failed.extend(check_g_h2_structure(body_html, intent))
     all_failed.extend(check_g_ai_link(body_html))
     all_failed.extend(check_g_html_clean(body_html))
+    all_failed.extend(check_g_faq_dup(body_html, calculator_faq=calculator_faq))
     all_failed.extend(check_g_health_disclaimer(body_html, intent=intent))
 
     failed_names = {f["gate"] for f in all_failed}
