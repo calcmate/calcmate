@@ -259,31 +259,16 @@ def check_g_numcon(body_html: str) -> list[dict]:
 # G-LEGAL : 법적 근거 오인용 검사
 # ═══════════════════════════════════════════════════════════════════════════
 
-# slug → [(금지 키워드, 설명)]
-_LEGAL_FORBIDDEN: dict[str, list[tuple[str, str]]] = {
-    "severance-pay": [
-        (
-            "근로기준법 제36조",
-            "퇴직금 지급기한은 근로자퇴직급여보장법 제9조 소관 (근기법 제36조는 임금 일반)",
-        ),
-        (
-            "근로자퇴직급여 보장법 제8조",
-            "지급기한 조항은 제9조 (제8조는 퇴직금 지급의무 규정)",
-        ),
-    ],
-    "four-insurances": [
-        (
-            "부가가치세",
-            "4대보험 취득신고와 무관한 부가가치세 언급",
-        ),
-    ],
-}
-
-
 def check_g_legal(body_html: str, slug: str | None) -> list[dict]:
     """법적 근거 오인용·무관 키워드 검출."""
     fails: list[dict] = []
-    rules = _LEGAL_FORBIDDEN.get(slug or "", [])
+    if not slug:
+        return fails
+    try:
+        from modules.law_ssot import get_forbidden_as_tuples
+        rules = get_forbidden_as_tuples(slug)
+    except Exception:
+        return fails
     if not rules:
         return fails
     text = _strip_html(body_html)
