@@ -620,6 +620,47 @@ def _extract_insurance_rates(text: str) -> set[str]:
     return rates
 
 
+def _faq_rate_values(faq_text: str) -> list[float]:
+    """FAQ 텍스트에서 보험료율 범위(0.5~30%) 숫자를 등장 순서대로, 중복 제거 없이 반환한다.
+
+    STEP138: _extract_insurance_rates()는 set을 반환해 "0.9% + 0.9% = 1.8%"처럼 동일
+    요율이 서로 다른 두 문장에서 각각 등장하는 자기완결 합산 서술을 판정할 수 없다
+    (set에서는 "0.9%"가 하나로 합쳐짐). 이 함수는 그 판정 전용으로 중복을 보존한다.
+    """
+    values: list[float] = []
+    for m in _RATE_RE.finditer(faq_text):
+        try:
+            v = float(m.group(1))
+        except ValueError:
+            continue
+        if _RATE_RANGE[0] <= v <= _RATE_RANGE[1]:
+            values.append(v)
+    return values
+
+
+def _is_self_derived_sum(faq_text: str, target_rate_str: str, tol: float = _ARITH_TOL) -> bool:
+    """target_rate_str(예: "1.8%")이 FAQ 텍스트 안에 등장하는(본문이 아님) 서로 다른
+    두 항목(텍스트상 별개 위치 — 값이 같아도 됨, 예: 0.9%와 0.9%)의 합으로 정확히
+    (G-NUMCON과 동일한 _ARITH_TOL 허용오차 내) 도출되는지만 확인한다.
+
+    "FAQ에만 있는 숫자는 전부 허용"이 아니라 "FAQ 안에서 그 숫자를 만드는 두 요율이
+    실제로 함께 제시된 경우"만 허용한다 — 근거 없는 합산 주장은 여전히 major로 남는다.
+    """
+    try:
+        target = float(target_rate_str.rstrip("%"))
+    except ValueError:
+        return False
+    if target <= 0:
+        return False
+    values = _faq_rate_values(faq_text)
+    for i in range(len(values)):
+        for j in range(i + 1, len(values)):
+            total = values[i] + values[j]
+            if abs(total - target) / target <= tol:
+                return True
+    return False
+
+
 def _extract_legal_ceilings(text: str) -> set[int]:
     """텍스트에서 '상한[액] N만원' / '상한[액] N원' 금액(원 단위) 추출."""
     result: set[int] = set()
@@ -714,6 +755,11 @@ def check_g_consistency(body_html: str, slug: str | None = None) -> list[dict]:
     only_in_faq_rates = faq_rates - body_rates
     if only_in_faq_rates and body_rates:
         for rate in sorted(only_in_faq_rates):
+            # STEP138: FAQ 안에서 그 요율이 서로 다른 두 항목의 합으로 자기완결적으로
+            # 도출되는 경우(예: "근로자 0.9% + 사업주 0.9% = 1.8%")는 실제 불일치가
+            # 아니므로 제외한다 — 근거 없이 새 숫자만 등장하면 여전히 major.
+            if _is_self_derived_sum(faq_text, rate):
+                continue
             fails.append({
                 "gate": "G-CONSISTENCY",
                 "grade": "major",
