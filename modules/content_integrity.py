@@ -757,6 +757,14 @@ _INTENT_REQUIRED_H2: dict[str, list[str]] = {
     "howto":       ["이용 절차", "계산 예시", "FAQ"],
     "documents":   ["필수 서류 목록", "서류 발급 방법", "FAQ"],
     "calculator":  ["계산 원리", "지급 조건", "FAQ"],
+    # STEP148: content/calculator/prompt.py::get_article_prompt()에 이미 정의된
+    # intent별 H2 구조를 그대로 옮겨온 것 — 새 H2 이름을 만들지 않았다.
+    "health_metric":     ["계산 원리", "계산 방법", "판정 기준", "해석 방법", "주의사항", "FAQ"],
+    "labor_money":       ["계산 원리", "지급 조건", "계산 방법", "계산 예시", "주의사항", "FAQ"],
+    "welfare_benefit":   ["지급 조건", "지급 대상", "계산 방법", "신청 방법", "주의사항", "FAQ"],
+    "tax_insurance":     ["계산 원리", "납부/공제 기준", "계산 예시", "주의사항", "FAQ"],
+    "housing_finance":   ["계산 원리", "적용 기준", "계산 예시", "주의사항", "FAQ"],
+    "general_calculator": ["계산 원리", "계산 방법", "계산 예시", "주의사항", "FAQ"],
 }
 
 # 구 파이프라인 H2 패턴 (확장) — 이 패턴이 등장하면 FAIL
