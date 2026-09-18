@@ -178,9 +178,9 @@ def check_g_calc(
 # G-NUMCON : 본문 내 산술식 모순 검사
 # ═══════════════════════════════════════════════════════════════════════════
 
-# "A만원 × B = C만원"  (B: 소수 0.X 또는 % 형식)
+# "A만원 × B = C만원"  (B: 소수 0.X 또는 % 형식 — %는 group(3)에 명시적으로 캡처)
 _ARITH2_RE = re.compile(
-    r"([\d,]+)\s*만\s*원\s*[×x×]\s*([\d.]+)(?:%|\s*)\s*=\s*(?:약\s*)?([\d,]+)\s*만\s*원"
+    r"([\d,]+)\s*만\s*원\s*[×x×]\s*([\d.]+)\s*(%)?\s*=\s*(?:약\s*)?([\d,]+)\s*만\s*원"
 )
 # "A만원 × B × C일 = D만원" (3항 곱셈 – 일수 포함)
 _ARITH3_RE = re.compile(
@@ -190,9 +190,15 @@ _ARITH3_RE = re.compile(
 _ARITH_TOL = 0.015  # 1.5% 허용 오차 (반올림 차이 흡수)
 
 
-def _check_mul(a_man: int, b: float, c_man_stated: int, label: str) -> dict | None:
-    """a(만원) × b 의 예상값과 c_man_stated(만원)을 비교. 오차 초과 시 fail dict 반환."""
-    if b > 1 and b < 100:  # % 표기 (e.g. "60" → 0.6)
+def _check_mul(a_man: int, b: float, c_man_stated: int, label: str, is_percent: bool = False) -> dict | None:
+    """a(만원) × b 의 예상값과 c_man_stated(만원)을 비교. 오차 초과 시 fail dict 반환.
+
+    STEP136: is_percent는 원문에 '%' 기호가 명시적으로 있었는지 여부를 호출부가
+    정확히 전달한다(_ARITH2_RE의 group(3)). 과거에는 "1<b<100이면 %로 추정"하는
+    휴리스틱을 썼으나, "150만원 × 3 = 450만원"처럼 %가 없는 단순 배수(3명·3회 등)를
+    3%(0.03)로 오인해 허위 산술 오류를 내는 버그가 있었다 — 이제 '%' 명시 여부로만
+    판단한다."""
+    if is_percent:
         b /= 100
     expected = a_man * b
     if expected == 0:
@@ -239,8 +245,10 @@ def check_g_numcon(body_html: str) -> list[dict]:
     for m in _ARITH2_RE.finditer(text):
         a = int(m.group(1).replace(",", ""))
         b = float(m.group(2))
-        c = int(m.group(3).replace(",", ""))
-        f = _check_mul(a, b, c, f"{m.group(1)}만원 × {m.group(2)}")
+        is_percent = bool(m.group(3))
+        c = int(m.group(4).replace(",", ""))
+        f = _check_mul(a, b, c, f"{m.group(1)}만원 × {m.group(2)}{m.group(3) or ''}",
+                       is_percent=is_percent)
         if f:
             fails.append(f)
 
