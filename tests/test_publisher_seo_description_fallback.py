@@ -129,3 +129,120 @@ def test_slug_empty_string_not_included(monkeypatch):
     seo = {"seo_title": "제목", "seo_description": "설명", "slug": ""}
     publisher._wordpress_api(seo, "<p>본문</p>", {}, CFG)
     assert "slug" not in captured["payload"]
+
+
+# ── STEP144: WP POST payload status Draft 지원(keyword-only, 하위호환) ──
+# content_pipeline/wordpress_publisher.py(REMOTE_WP_POST_BLOCKED/NullPublisher)와는
+# 완전히 무관한 별도 경로 — 이 파일의 테스트는 modules/publisher.py만 다룬다.
+
+class _FakeResponseEcho:
+    """요청 payload의 status를 그대로 응답에 반영하는 fake(publish()의 반환값
+    res["status"] 로직까지 검증하기 위함)."""
+    def __init__(self, sent_status):
+        self._sent_status = sent_status
+        self.status_code = 200
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {"id": 1, "link": "http://wp.test/p/1",
+                "status": self._sent_status, "date": "2026-08-22T00:00:00"}
+
+
+def _capture_payload_echo(monkeypatch):
+    captured = {}
+
+    def fake_post(url, json=None, auth=None, timeout=None):
+        captured["payload"] = json
+        return _FakeResponseEcho(json.get("status"))
+
+    monkeypatch.setattr(publisher.requests, "post", fake_post)
+    return captured
+
+
+class TestWordpressApiStatusParameter:
+    """Test A/B/C: _wordpress_api()의 status 기본값/명시적 draft/명시적 publish."""
+
+    def test_a_default_status_is_publish(self, monkeypatch):
+        captured = _capture_payload_echo(monkeypatch)
+        publisher._wordpress_api({"seo_title": "t"}, "<p>본문</p>", {}, CFG)
+        assert captured["payload"]["status"] == "publish"
+
+    def test_b_explicit_draft(self, monkeypatch):
+        captured = _capture_payload_echo(monkeypatch)
+        publisher._wordpress_api({"seo_title": "t"}, "<p>본문</p>", {}, CFG, status="draft")
+        assert captured["payload"]["status"] == "draft"
+
+    def test_c_explicit_publish(self, monkeypatch):
+        captured = _capture_payload_echo(monkeypatch)
+        publisher._wordpress_api({"seo_title": "t"}, "<p>본문</p>", {}, CFG, status="publish")
+        assert captured["payload"]["status"] == "publish"
+
+
+class TestWordpressApiInvalidStatusRejected:
+    """Test D: 잘못된 status는 명시적으로 거부되고, 이 경우 requests.post 자체가
+    호출되지 않아야 한다(WP write=0 보장)."""
+
+    @pytest.mark.parametrize("bad_status", ["trash", "pending", "private", ""])
+    def test_invalid_status_raises_before_network_call(self, monkeypatch, bad_status):
+        calls = []
+        monkeypatch.setattr(publisher.requests, "post",
+                             lambda *a, **k: calls.append(1))
+        with pytest.raises(ValueError):
+            publisher._wordpress_api({"seo_title": "t"}, "<p>본문</p>", {}, CFG, status=bad_status)
+        assert calls == []
+
+    def test_none_status_raises(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(publisher.requests, "post",
+                             lambda *a, **k: calls.append(1))
+        with pytest.raises(ValueError):
+            publisher._wordpress_api({"seo_title": "t"}, "<p>본문</p>", {}, CFG, status=None)
+        assert calls == []
+
+
+class TestPublishFunctionStatusPropagation:
+    """publish() 진입점 레벨에서도 동일하게 동작하는지 확인한다."""
+
+    def test_publish_default_status_published(self, monkeypatch):
+        captured = _capture_payload_echo(monkeypatch)
+        res = publisher.publish("post_1", {"seo_title": "t"}, "<p>본문</p>", {}, CFG)
+        assert captured["payload"]["status"] == "publish"
+        assert res["status"] == "published"
+
+    def test_publish_explicit_draft(self, monkeypatch):
+        captured = _capture_payload_echo(monkeypatch)
+        res = publisher.publish("post_1", {"seo_title": "t"}, "<p>본문</p>", {}, CFG, status="draft")
+        assert captured["payload"]["status"] == "draft"
+        assert res["status"] == "draft"
+
+    def test_publish_invalid_status_rejected_before_network_call(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(publisher.requests, "post",
+                             lambda *a, **k: calls.append(1))
+        with pytest.raises(ValueError):
+            publisher.publish("post_1", {"seo_title": "t"}, "<p>본문</p>", {}, CFG, status="scheduled")
+        assert calls == []
+
+
+class TestExistingPayloadFieldsUnchangedByDraftSupport:
+    """Test E: Draft 지원 추가가 title/excerpt/content/featured_media/slug 등
+    기존 필드에 영향을 주지 않는지 회귀 확인한다."""
+
+    def test_other_fields_identical_for_publish_and_draft(self, monkeypatch):
+        seo = {"seo_title": "제목", "seo_description": "설명", "slug": "four-insurances"}
+
+        captured_publish = _capture_payload_echo(monkeypatch)
+        publisher._wordpress_api(seo, "<p>본문</p>", {}, CFG, status="publish")
+        payload_publish = dict(captured_publish["payload"])
+
+        captured_draft = _capture_payload_echo(monkeypatch)
+        publisher._wordpress_api(seo, "<p>본문</p>", {}, CFG, status="draft")
+        payload_draft = dict(captured_draft["payload"])
+
+        # status를 제외한 모든 필드가 완전히 동일해야 한다.
+        for key in ("title", "excerpt", "content", "featured_media", "slug"):
+            assert payload_publish[key] == payload_draft[key], f"{key} differs"
+        assert payload_publish["status"] == "publish"
+        assert payload_draft["status"] == "draft"
