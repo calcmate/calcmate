@@ -8,7 +8,13 @@ publish_calculator_post()를 누군가 직접 호출해야만 동작한다.
 
 이미 검증된 기존 부품만 조립하며, 콘텐츠 생성 로직을 재구현하지 않는다:
   - repositories.calculator_repository.CalculatorRepository.get_by_slug()
-  - content.calculator.writer.auto_generate_all()  (SEO/FAQ/본문 생성, 기존 그대로)
+  - content.calculator.example_builder.build_example_context()  (CALCMATE-BLOG-QUALITY-
+    STEP132에서 만든 결정론적 계산 예시 builder. 등록된 slug만 example_context를
+    만들고, 미등록 slug는 None을 그대로 반환한다 — 이 파일은 그 결과를 가공하거나
+    새로운 fallback을 만들지 않고 auto_generate_all()에 그대로 전달만 한다)
+  - content.calculator.writer.auto_generate_all()  (SEO/FAQ/본문 생성, 기존 그대로.
+    example_context는 본문(article) 생성 단계에만 전달되며 FAQ/SEO/이미지 프롬프트
+    단계에는 영향을 주지 않는다 — writer.py 자체는 이 STEP에서 수정하지 않음)
   - content.blog.template.build_blog_html()        (HTML 조립, 기존 그대로)
   - modules.publisher.publish()                     (comment_status/category_name/
     resolve_category_id() 포함 — 전부 기존 구현 그대로, 이 파일에서 재작성하지 않음)
@@ -22,6 +28,7 @@ import json
 
 from adapters.db.factory import get_db_adapter
 from repositories.calculator_repository import CalculatorRepository
+from content.calculator.example_builder import build_example_context
 from content.calculator.writer import auto_generate_all
 from content.blog.template import build_blog_html
 from modules import publisher
@@ -44,6 +51,12 @@ def publish_calculator_post(slug: str, cfg: dict, *, status: str = "publish") ->
 
     comment_status는 호출자가 지정할 필요 없이 이 함수가 항상 "closed"로
     publisher.publish()에 전달한다.
+
+    example_context: content.calculator.example_builder.build_example_context(calc)가
+    만든 결정론적 계산 예시(verified_examples/facts)를 본문 생성 단계에 전달한다.
+    등록되지 않은 slug는 build_example_context()가 None을 반환하며, 이 경우
+    auto_generate_all()은 example_context 없이 기존과 동일하게 동작한다(임의
+    fallback 없음).
     """
     db = get_db_adapter(cfg)
     calc = CalculatorRepository(db).get_by_slug(slug)
@@ -56,7 +69,8 @@ def publish_calculator_post(slug: str, cfg: dict, *, status: str = "publish") ->
         LOG.error("[calculator_wp_publish] category missing: slug=%s", slug)
         return {"success": False, "error": "category_missing", "slug": slug}
 
-    result = auto_generate_all(cfg, calc, save=False)
+    example_context = build_example_context(calc)
+    result = auto_generate_all(cfg, calc, save=False, example_context=example_context)
 
     faq = result.get("faq", "[]")
     if isinstance(faq, str):
