@@ -85,8 +85,10 @@ def get_seo_prompt(calc: dict) -> tuple:
     return system, _ctx(calc)
 
 
-def get_faq_prompt(calc: dict, n_min: int = 6, n_max: int = 8, law_ssot_block: str = "") -> tuple:
+def get_faq_prompt(calc: dict, n_min: int = 6, n_max: int = 8, law_ssot_block: str = "",
+                    example_context: dict = None) -> tuple:
     ssot_prefix = (law_ssot_block.strip() + "\n\n") if law_ssot_block.strip() else ""
+    example_str = json.dumps(example_context, ensure_ascii=False) if example_context else "제공된 계산 데이터 없음"
     # intent 결정: category 기반 자동 결정
     intent = _get_intent_from_category(calc)
     
@@ -144,6 +146,8 @@ def get_faq_prompt(calc: dict, n_min: int = 6, n_max: int = 8, law_ssot_block: s
               "- 본문의 문장이나 문단을 그대로 복사하거나 어미만 바꿔 반복하지 않는다.\n"
               "- 법률상 핵심 사실을 다시 확인해야 하는 경우에는 본문과 동일한 사실의 반복을 허용한다.\n"
               "- 차별화를 위해 법률·수치·기간을 임의로 변경하거나 새로운 사실을 만들어내지 않는다.\n"
+              "[검증된 계산 데이터]\n"
+              f"{example_str}\n\n"
               + QUALITY + "\n"
               '순수 JSON만 반환: {"faq":[{"question":"","answer":""}]}')
     return system, _ctx(calc)

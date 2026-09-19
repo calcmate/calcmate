@@ -14,12 +14,14 @@ from . import calculator_prompt_manager as PM
 LOG = get_logger()
 
 
-def generate_faq(cfg, name_or_calc, n: int = 6, n_max: int = 8) -> list:
-    """name(str) 또는 calc(dict) 입력 모두 허용. FAQ 6~8개 반환(6필수항목 포함)."""
+def generate_faq(cfg, name_or_calc, n: int = 6, n_max: int = 8, example_context: dict = None) -> list:
+    """name(str) 또는 calc(dict) 입력 모두 허용. FAQ 6~8개 반환(6필수항목 포함).
+    example_context: CALCMATE-BLOG-QUALITY-STEP135 — 결정론적 계산 예시(verified_examples/
+    facts)를 FAQ 프롬프트에 그대로 전달한다. None이면 기존과 동일하게 동작한다."""
     calc = name_or_calc if isinstance(name_or_calc, dict) else {"name": str(name_or_calc)}
     name = calc.get("name", "")
     try:
-        system, user = PM.get_faq_prompt(calc, n, n_max)
+        system, user = PM.get_faq_prompt(calc, n, n_max, example_context=example_context)
         provider, model = build_provider_for_role("writing", cfg)
         text, tokens = provider.chat(system, user, model, max_tokens=1200)
         try:

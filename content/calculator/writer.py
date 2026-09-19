@@ -117,8 +117,8 @@ def auto_generate_all(cfg: dict, calc: dict, save: bool = True, review: bool = F
         seo = {"seo_title": f"{datetime.now().year} {name} | 자동 계산",
                "seo_description": f"{name} 계산 방법과 기준을 확인하세요."}
 
-    # 2) FAQ
-    faq = generate_faq(cfg, calc)
+    # 2) FAQ — CALCMATE-BLOG-QUALITY-STEP135: 본문과 동일한 example_context를 그대로 전달
+    faq = generate_faq(cfg, calc, example_context=example_context)
 
     # 3) 본문 — SSOT 법정수치 지시문 주입(content_ssot 없는 slug는 빈 문자열 → 기존 동작 유지)
     from modules.law_ssot import get_ssot_prompt_block
