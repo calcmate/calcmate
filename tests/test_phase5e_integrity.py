@@ -30,11 +30,14 @@ def _grades(failed: list, gate: str) -> set:
 class TestGCalc:
 
     def _ex_ctx(self, **result_kw):
-        """단일 예시를 가진 example_context 생성."""
-        return {"examples": [{"inputs": {}, "result": result_kw}]}
+        """단일 예시를 가진 example_context 생성.
+        (CALCMATE-BLOG-QUALITY-STEP140: content/calculator/example_builder.py가
+        실제로 반환하는 키 이름("verified_examples")에 맞춤 — STEP139에서 "examples"
+        키를 실제로 채워 보내는 production caller가 없음을 확인함)"""
+        return {"verified_examples": [{"inputs": {}, "result": result_kw}]}
 
     def _total_ctx(self, total: int):
-        return {"examples": [{"inputs": {}, "result": {"total": total}}]}
+        return {"verified_examples": [{"inputs": {}, "result": {"total": total}}]}
 
     # ── 기본 탐지 ────────────────────────────────────────────────────────
 
@@ -54,14 +57,14 @@ class TestGCalc:
     def test_non_total_component_present_passes(self):
         """total 없는 경우 컴포넌트 값이 본문에 있으면 PASS."""
         body = "<p>건강보험 105,600원 부과됩니다.</p>"
-        ctx = {"examples": [{"inputs": {}, "result": {"health_insurance": 105_600}}]}
+        ctx = {"verified_examples": [{"inputs": {}, "result": {"health_insurance": 105_600}}]}
         fails = check_g_calc(body, ctx)
         assert "G-CALC" not in _gate_names(fails)
 
     def test_small_amount_exempt(self):
         """1만원 미만 금액(요율값 등)은 검사 대상 제외."""
         body = "<p>아무 금액도 없습니다.</p>"
-        ctx = {"examples": [{"inputs": {}, "result": {"ratio": 9_000}}]}
+        ctx = {"verified_examples": [{"inputs": {}, "result": {"ratio": 9_000}}]}
         fails = check_g_calc(body, ctx)
         assert "G-CALC" not in _gate_names(fails)
 
@@ -96,7 +99,7 @@ class TestGCalc:
     def test_raw_won_matches(self):
         """'864,000,000원' (원화 직접) 도 인식."""
         body = "<p>864,000,000원을 지급합니다.</p>"
-        ctx = {"examples": [{"inputs": {}, "result": {"total": 864_000_000}}]}
+        ctx = {"verified_examples": [{"inputs": {}, "result": {"total": 864_000_000}}]}
         fails = check_g_calc(body, ctx)
         assert "G-CALC" not in _gate_names(fails)
 
@@ -229,7 +232,7 @@ class TestRunIntegrityGates:
             "주택 구입 또는 전세보증금 마련을 목적으로 하는 경우 중간정산 요건을 확인합니다.</p>"
             "<h2>FAQ</h2><dl><dt>질문</dt><dd>답변입니다.</dd></dl>"
         )
-        ctx = {"examples": [{"inputs": {}, "result": {"total": 6_000_000}}]}
+        ctx = {"verified_examples": [{"inputs": {}, "result": {"total": 6_000_000}}]}
         passed, failed = run_integrity_gates(body, slug="severance-pay", example_context=ctx, intent="eligibility")
         assert "G-CALC" in passed
         assert "G-LEGAL" in passed
@@ -245,7 +248,7 @@ class TestRunIntegrityGates:
             "<p>퇴직금은 근로기준법 제36조에 따라 지급됩니다. "
             "총액은 200만원입니다. 자세히 살펴보겠습니다.</p>"
         )
-        ctx = {"examples": [{"inputs": {}, "result": {"total": 6_000_000}}]}
+        ctx = {"verified_examples": [{"inputs": {}, "result": {"total": 6_000_000}}]}
         _, failed = run_integrity_gates(
             body, slug="severance-pay", example_context=ctx, intent="eligibility"
         )

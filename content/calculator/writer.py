@@ -163,6 +163,20 @@ def auto_generate_all(cfg: dict, calc: dict, save: bool = True, review: bool = F
         LOG.warning("[auto-gen] G-LEGAL-CURRENT 불일치 감지(저장은 계속 진행): %s -> %s",
                     slug, [f.get("detail") for f in _legal_fails])
 
+    # STEP140: example_context(STEP132 builder의 verified_examples)의 검증된 금액이
+    # 본문에 실제로 등장하는지 확인(논블로킹 warning — check_g_legal_current와 동일한
+    # 성격, 실패해도 저장은 계속 진행). intent는 새 mapping을 만들지 않고 기존
+    # get_article_prompt()/get_faq_prompt()가 쓰는 것과 동일한 helper를 재사용한다.
+    try:
+        from modules.content_integrity import check_g_calc
+        _g_calc_intent = PM._get_intent_from_category(calc)
+        _g_calc_fails = check_g_calc(article, example_context=example_context, intent=_g_calc_intent)
+    except Exception as _ge:
+        _g_calc_fails = [{"gate": "G-CALC", "grade": "error", "detail": f"게이트 실행 오류: {_ge}"}]
+    if _g_calc_fails:
+        LOG.warning("[auto-gen] G-CALC 불일치 감지(저장은 계속 진행): %s -> %s",
+                    slug, [f.get("detail") for f in _g_calc_fails])
+
     # STEP 28-52: 콘텐츠 SSOT 추적 필드(content_hash/content_ssot_hash/content_source/
     # legal_validated_*) 계산. 기존 게이트(check_g_legal_current)를 내부에서 재사용하는
     # 공통 helper이며, 실패 상세 리스트는 DB에 저장하지 않는다(status 문자열만).
@@ -189,6 +203,8 @@ def auto_generate_all(cfg: dict, calc: dict, save: bool = True, review: bool = F
     _db_payload.update(_tracking_fields)
     result["_legal_current_passed"] = not _legal_fails
     result["_legal_current_failures"] = _legal_fails
+    result["_g_calc_passed"] = not _g_calc_fails
+    result["_g_calc_failures"] = _g_calc_fails
 
     # 6) DB 저장 (Repository 경유)
     if save and calc.get("id"):

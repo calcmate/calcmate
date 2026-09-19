@@ -136,8 +136,12 @@ def check_g_calc(
     intent: str | None = None,
 ) -> list[dict]:
     """
-    example_context.examples[].result 의 검증된 금액이
+    example_context.verified_examples[].result 의 검증된 금액이
     본문 텍스트에 하나 이상 등장하는지 확인한다.
+    (CALCMATE-BLOG-QUALITY-STEP140: content/calculator/example_builder.py::
+    build_example_context()가 실제로 반환하는 키 이름("verified_examples")과
+    일치시킴 — 과거 "examples" 키는 어떤 production caller도 실제로 채워
+    보낸 적이 없어 하위호환 처리를 별도로 두지 않았다, STEP139 확인)
 
     - documents intent: 절차 안내 글이므로 계산 결과 미인용 — 면제
     - total 필드 있으면 total만, 없으면 개별 컴포넌트 전체 검사
@@ -148,7 +152,7 @@ def check_g_calc(
         return []  # 서류 안내 글은 계산 결과 인용 불필요
 
     fails: list[dict] = []
-    examples = (example_context or {}).get("examples") or []
+    examples = (example_context or {}).get("verified_examples") or []
     if not examples:
         return fails
 
