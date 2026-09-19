@@ -66,9 +66,61 @@ def upload_media(fpath: Path, cfg: dict) -> dict:
     return {"success": True, "media_id": data["id"], "source_url": data["source_url"]}
 
 
+_ALLOWED_WP_POST_STATUSES = ("publish", "draft")
+
+
+def resolve_category_id(cfg: dict, category_name: str) -> dict:
+    """WordPress 카테고리를 이름으로 정확히 일치 조회한다(GET만 수행, 생성하지 않음).
+
+    CalcMate 신규 게시 표준(calculators.category → WP category) 전용 헬퍼.
+    이름이 정확히 일치하는 카테고리가 없으면 실패를 명시적으로 반환한다 —
+    Uncategorized로의 자동 대체나 신규 카테고리 자동 생성은 이 함수의 책임이 아니다.
+
+    성공: {"success": True, "category_id": int}
+    실패: {"success": False, "error": "category_not_found:<name>" |
+           "empty_category_name" | authentication_failed/permission_denied 등}
+    """
+    name = (category_name or "").strip()
+    if not name:
+        return {"success": False, "error": "empty_category_name"}
+
+    url = cfg.get("WORDPRESS_URL", "").rstrip("/") + "/wp-json/wp/v2/categories"
+    try:
+        resp = requests.get(url, params={"per_page": 100}, auth=_wp_auth(cfg), timeout=30)
+        if resp.status_code != 200:
+            return {"success": False, "error": _wp_error(resp)}
+        for cat in resp.json():
+            if cat.get("name") == name:
+                return {"success": True, "category_id": cat.get("id")}
+        return {"success": False, "error": f"category_not_found:{name}"}
+    except Exception as e:
+        LOG.warning("WordPress 카테고리 조회 실패(category=%s): %s", name, e)
+        return {"success": False, "error": str(e)}
+
+
 def publish(post_id: str, seo_data: dict, html_body: str,
-            image_urls: dict, cfg: dict) -> dict:
-    """반환: {"wordpress": url, "status": "published"|"skipped_no_wp"}"""
+            image_urls: dict, cfg: dict, *, status: str = "publish",
+            comment_status: str | None = None, category_name: str | None = None) -> dict:
+    """반환: {"wordpress": url, "status": "published"|"draft"|"skipped_no_wp"}
+
+    STEP144: status는 keyword-only이며 기본값 "publish"로 기존 호출자(위치 인자만
+    넘기는 caller)는 전혀 영향받지 않는다. "publish"/"draft" 외의 값은 즉시
+    ValueError로 거부한다(None/빈 문자열/기타 임의 문자열을 draft로 자동 해석하지
+    않음). content_pipeline/wordpress_publisher.py의 REMOTE_WP_POST_BLOCKED/
+    NullPublisher와는 무관한 완전히 별도의 경로다.
+
+    comment_status/category_name은 CalcMate 신규 게시 표준을 위한 keyword-only
+    옵트인 인자다. 둘 다 기본값 None이며, None이면 payload에 전혀 포함되지 않아
+    기존 호출자(main.py/retry_queue.py/blog_scheduler_adapter.py)는 이 인자를
+    넘기지 않는 한 기존과 동일한 요청을 그대로 보낸다.
+    category_name을 넘겼는데 WordPress에서 이름이 정확히 일치하는 카테고리를
+    찾지 못하면(자동 생성/Uncategorized 대체 없음) WP POST 자체를 실행하지 않고
+    {"success": False, "error": ..., "status": "category_not_found"}를 반환한다."""
+    if status not in _ALLOWED_WP_POST_STATUSES:
+        raise ValueError(
+            f"허용되지 않는 WP status: {status!r} (허용값: {_ALLOWED_WP_POST_STATUSES})"
+        )
+
     wp_image_urls = {}
     for kind, fpath in image_urls.items():
         if fpath and fpath != "실패" and not fpath.startswith("http"):
@@ -87,8 +139,12 @@ def publish(post_id: str, seo_data: dict, html_body: str,
                 "wp_status": "skipped", "published_at": datetime.now().isoformat(),
                 "status": "skipped_no_wp"}
 
-    res = _wordpress_api(seo_data, html_body, wp_image_urls, cfg)
-    res["status"] = "published"
+    res = _wordpress_api(seo_data, html_body, wp_image_urls, cfg, status=status,
+                         comment_status=comment_status, category_name=category_name)
+    if res.get("success") is False:
+        # category_name resolve 실패 등 — WP POST 미실행 상태. status를 덮어쓰지 않고 그대로 전달.
+        return res
+    res["status"] = "published" if status == "publish" else status
     return res
 
 
@@ -270,7 +326,24 @@ def restore_post(cfg, wp_post_id) -> dict:
         return {"success": False, "error": str(e), "wp_post_id": wp_post_id}
 
 
-def _wordpress_api(seo, html, wp_imgs, cfg) -> dict:
+def _wordpress_api(seo, html, wp_imgs, cfg, *, status: str = "publish",
+                   comment_status: str | None = None, category_name: str | None = None) -> dict:
+    if status not in _ALLOWED_WP_POST_STATUSES:
+        raise ValueError(
+            f"허용되지 않는 WP status: {status!r} (허용값: {_ALLOWED_WP_POST_STATUSES})"
+        )
+
+    category_id = None
+    if category_name is not None:
+        cat_res = resolve_category_id(cfg, category_name)
+        if not cat_res.get("success"):
+            LOG.error("[publish] WP 카테고리 조회 실패 — 게시 중단(POST 미실행): "
+                      "category=%r error=%s", category_name, cat_res.get("error"))
+            return {"success": False, "error": cat_res.get("error"),
+                    "wordpress": "", "wp_post_id": "", "wp_permalink": "",
+                    "status": "category_not_found"}
+        category_id = cat_res["category_id"]
+
     url = cfg.get("WORDPRESS_URL", "").rstrip("/") + "/wp-json/wp/v2/posts"
     
     thumb_info = wp_imgs.get("thumbnail_url", {})
@@ -304,7 +377,7 @@ def _wordpress_api(seo, html, wp_imgs, cfg) -> dict:
 
     payload = {
         "title": seo.get("seo_title", ""),
-        "status": "publish",
+        "status": status,
         "excerpt": seo.get("meta_description") or seo.get("seo_description", ""),
         "content": full_content,
         "featured_media": thumb_info.get("media_id", 0)
@@ -313,6 +386,12 @@ def _wordpress_api(seo, html, wp_imgs, cfg) -> dict:
     # 기존 호출자(main.py/retry_queue.py)는 slug를 넘기지 않으므로 payload가 그대로 유지됨).
     if seo.get("slug"):
         payload["slug"] = seo["slug"]
+    # CalcMate 신규 게시 표준(옵트인) — 인자를 넘기지 않는 기존 호출자는 이 두 필드가
+    # payload에 전혀 나타나지 않아 기존과 동일한 요청을 그대로 보낸다.
+    if comment_status is not None:
+        payload["comment_status"] = comment_status
+    if category_id is not None:
+        payload["categories"] = [category_id]
     resp = requests.post(
         url, json=payload,
         auth=_wp_auth(cfg),
