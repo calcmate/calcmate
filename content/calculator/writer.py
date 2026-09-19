@@ -21,6 +21,28 @@ from modules.calculator_image_prompt_generator import _image_pair
 LOG = get_logger()
 
 
+def _load_valid_calculators_block(cfg: dict) -> str:
+    """SQLite MAIN(calculators, status=active)에서 valid 계산기 목록 문자열을 만든다.
+
+    STEP125: PM._VALID_CALCULATORS(하드코딩, 2026-08 기준 11개)가 stale해진 문제를
+    calculators SQLite MAIN(STEP90~122에서 확정된 authoritative source, Sheets/
+    Registry v3가 아님)에서 동적으로 조회해 해결한다. get_calculator_storage_adapter()
+    (adapters/db/factory.py)를 그대로 재사용 — 신규 저장소 접근 경로를 만들지 않는다.
+    조회 실패 시(테스트 등에서 cfg가 최소 구성일 때) 기존 정적 목록으로 안전하게 폴백한다.
+    """
+    try:
+        from adapters.db.factory import get_calculator_storage_adapter
+        from repositories.calculator_repository import CalculatorRepository
+        active = CalculatorRepository(get_calculator_storage_adapter(cfg)).get_active()
+        lines = [f"- {c.get('name', '')} ({c.get('slug', '')})"
+                 for c in active if c.get("slug")]
+        if lines:
+            return "\n".join(sorted(lines)) + "\n"
+    except Exception as e:
+        LOG.warning("valid calculator 목록 SQLite MAIN 조회 실패 — 기존 정적 목록으로 폴백: %s", e)
+    return PM._VALID_CALCULATORS
+
+
 def generate_article(cfg: dict, calc: dict, seo: dict = None, faq: list = None,
                      review: bool = False, example_context: dict = None, intent: str = None,
                      law_ssot_block: str = "") -> str:
@@ -42,8 +64,10 @@ def generate_article(cfg: dict, calc: dict, seo: dict = None, faq: list = None,
                 f"<h2>FAQ</h2><p>주휴수당 대상은? 15시간 이상 근로자입니다.</p>"
                 f"<h2>출처</h2><p>근로기준법 제55조, 고용노동부 공식 안내</p>")
 
+    valid_calculators = _load_valid_calculators_block(cfg)
     system, user = PM.get_article_prompt(calc, seo, faq, example_context, intent=intent,
-                                          law_ssot_block=law_ssot_block)
+                                          law_ssot_block=law_ssot_block,
+                                          valid_calculators=valid_calculators)
     provider, model = build_provider_for_role("writing", cfg)   # MODEL_WRITER
 
     def _call():

@@ -151,6 +151,10 @@ def get_faq_prompt(calc: dict, n_min: int = 6, n_max: int = 8, law_ssot_block: s
 
 # SalaryMate에 실제 존재하는 계산기 목록 (SSOT: DB calculators 테이블, 2026-08 기준).
 # A-3 게이트: 이 목록 외 계산기를 언급/링크하는 것을 원천 차단하기 위해 프롬프트에 주입한다.
+# STEP125: get_article_prompt()가 valid_calculators를 명시적으로 받으면 그 값을 우선 사용한다
+# (content/calculator/writer.py::generate_article()가 SQLite MAIN calculators에서 동적으로
+# 만들어 전달함). 이 상수는 valid_calculators 미전달 시(호출자가 없거나 DB 조회 실패 시)의
+# 안전한 폴백으로만 남긴다 — 삭제하지 않음.
 _VALID_CALCULATORS = (
     "- 연차수당 계산기 (annual-leave-allowance)\n"
     "- 연차 잔여일 계산기 (annual-leave-remaining)\n"
@@ -194,7 +198,7 @@ _HTML_OUTPUT_RULE = (
 )
 
 
-def get_article_prompt(calc: dict, seo: dict = None, faq: list = None, example_context: dict = None, intent: str = None, law_ssot_block: str = "") -> tuple:
+def get_article_prompt(calc: dict, seo: dict = None, faq: list = None, example_context: dict = None, intent: str = None, law_ssot_block: str = "", valid_calculators: str = None) -> tuple:
     seo = seo or {}
     example_str = json.dumps(example_context, ensure_ascii=False) if example_context else "제공된 계산 데이터 없음"
 
@@ -309,7 +313,7 @@ def get_article_prompt(calc: dict, seo: dict = None, faq: list = None, example_c
 
     ssot_block = (
         "[현재 SalaryMate에 존재하는 계산기 목록 (SSOT — 이 목록 외에는 존재하지 않는다)]\n"
-        + _VALID_CALCULATORS
+        + (valid_calculators if valid_calculators is not None else _VALID_CALCULATORS)
     )
 
     law_ssot_prefix = (law_ssot_block.strip() + "\n\n") if law_ssot_block.strip() else ""
