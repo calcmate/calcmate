@@ -157,3 +157,158 @@ def test_f_golden10_no_db_write_via_save_false(monkeypatch):
     ctx = build_example_context(calc)
     writer_mod.auto_generate_all({}, calc, save=False, auto_review=False, example_context=ctx)
     assert called["get_db_adapter"] is False
+
+
+# ── CALCMATE-BLOG-QUALITY-STEP149: ANY COMPLETE Contract v1 신규 테스트 ──────
+#
+# STEP148 Implementation Specification의 테스트 매트릭스를 그대로 구현한다.
+# 기존 test_a~f 및 test_phase5e_integrity.py::TestGCalc는 전부 단일-example
+# fixture만 사용하므로(ALL semantics == ANY COMPLETE semantics when n=1),
+# 여기서는 다중-example(n>=2) 시나리오만 추가한다.
+
+def _multi_ctx(*results: dict) -> dict:
+    """여러 개의 result를 가진 verified_examples로 example_context를 만든다."""
+    return {"verified_examples": [{"inputs": {}, "result": r} for r in results]}
+
+
+# Test 1 (Case A): example[0] complete, example[1] absent → PASS
+def test_1_first_example_complete_second_absent_passes():
+    ctx = _multi_ctx({"amount": 1_100_000}, {"amount": 9_900_000})
+    body = f"<p>지급액은 {_format_krw(1_100_000)[0]}입니다. 다른 이야기는 없습니다.</p>"
+    fails = check_g_calc(body, ctx)
+    assert fails == []
+
+
+# Test 2 (Case B): example[0] absent, example[1] complete → PASS (마지막 example 완전)
+def test_2_last_example_complete_first_absent_passes():
+    ctx = _multi_ctx({"amount": 1_100_000}, {"amount": 9_900_000})
+    body = f"<p>지급액은 {_format_krw(9_900_000)[0]}입니다. 다른 이야기는 없습니다.</p>"
+    fails = check_g_calc(body, ctx)
+    assert fails == []
+
+
+# Test 3: example[0] partial(일부만 언급), example[1] complete → PASS
+def test_3_partial_first_complete_second_passes():
+    ctx = _multi_ctx(
+        {"a": 1_100_000, "b": 2_200_000},   # 2개 필드 중 1개만 등장 예정 → 불완전
+        {"amount": 9_900_000},               # 완전 등장 예정
+    )
+    body = (
+        f"<p>첫 번째 예시 중 일부 {_format_krw(1_100_000)[0]}만 언급합니다. "
+        f"두 번째 예시는 {_format_krw(9_900_000)[0]}입니다.</p>"
+    )
+    fails = check_g_calc(body, ctx)
+    assert fails == []
+
+
+# Test 4: 모든 example이 부분적으로만(불완전하게) 등장 → EXAMPLE_MISSING
+def test_4_all_examples_partial_fails():
+    ctx = _multi_ctx(
+        {"a": 1_100_000, "b": 2_200_000},
+        {"c": 3_300_000, "d": 4_400_000},
+    )
+    body = (
+        f"<p>{_format_krw(1_100_000)[0]}과 {_format_krw(3_300_000)[0]}만 "
+        f"본문에 등장합니다(각 example의 두 번째 필드는 미등장).</p>"
+    )
+    fails = check_g_calc(body, ctx)
+    assert len(fails) > 0
+    assert all(f["gate"] == "G-CALC" for f in fails)
+
+
+# Test 5: 모든 example이 완전히 미등장 → EXAMPLE_MISSING
+def test_5_all_examples_absent_fails():
+    ctx = _multi_ctx({"amount": 1_100_000}, {"amount": 9_900_000})
+    body = "<p>금액 이야기가 전혀 없는 본문입니다.</p>"
+    fails = check_g_calc(body, ctx)
+    assert len(fails) > 0
+    assert all(f["gate"] == "G-CALC" for f in fails)
+
+
+# Test 6 (Case E, 의도된 동작): example[0] complete+correct,
+# example[1] present-but-wrong-value → PASS.
+# CALC_VALUE_VALIDATION은 Contract v1 범위 밖이므로, "다른 example의 값이
+# 틀렸다"는 사실은 검출하지 않는다(STEP147/148에서 명시적으로 결정됨).
+def test_6_first_complete_second_wrong_value_passes():
+    ctx = _multi_ctx({"amount": 1_100_000}, {"amount": 9_900_000})
+    body = (
+        f"<p>지급액은 {_format_krw(1_100_000)[0]}입니다. "
+        f"두 번째 사례는 잘못된 값인 1원으로 잘못 기재되어 있습니다.</p>"
+    )
+    fails = check_g_calc(body, ctx)
+    assert fails == []
+
+
+# Test 7: 모든 example이 non-checkable(0원/소액) → NO_CHECKABLE_VALUE([] 반환)
+def test_7_all_examples_non_checkable_returns_empty():
+    ctx = _multi_ctx({"amount": 0}, {"ratio": 9_000})
+    body = "<p>이 계산기는 조건 미충족 시 0원입니다.</p>"
+    fails = check_g_calc(body, ctx)
+    assert fails == []
+
+
+# ── 금액 표기 포맷 테스트(기존 포맷 무회귀 + 신규 공백 변형 + 억 단위 미지원 확인) ──
+
+def test_format_comma_won_passes():
+    ctx = _multi_ctx({"amount": 1_100_000})
+    fails = check_g_calc("<p>지급액은 1,100,000원입니다.</p>", ctx)
+    assert fails == []
+
+
+def test_format_man_won_no_space_passes():
+    ctx = _multi_ctx({"amount": 1_100_000})
+    fails = check_g_calc("<p>지급액은 110만원입니다.</p>", ctx)
+    assert fails == []
+
+
+def test_format_yak_man_won_passes():
+    ctx = _multi_ctx({"amount": 1_100_000})
+    fails = check_g_calc("<p>지급액은 약 110만원입니다.</p>", ctx)
+    assert fails == []
+
+
+def test_format_man_won_space_passes():
+    ctx = _multi_ctx({"amount": 1_100_000})
+    fails = check_g_calc("<p>지급액은 110만 원입니다.</p>", ctx)
+    assert fails == []
+
+
+def test_format_raw_won_space_new_variant_passes():
+    """CALCMATE-BLOG-QUALITY-STEP149에서 신규 추가된 '원' 앞 공백 표기 지원 확인."""
+    ctx = _multi_ctx({"amount": 1_100_000})
+    fails = check_g_calc("<p>지급액은 1,100,000 원입니다.</p>", ctx)
+    assert fails == []
+
+
+def test_format_eok_unit_not_supported():
+    """'억' 단위 표기는 이번 Contract v1 범위에서 명시적으로 미지원임을 확인한다
+    (STEP146/147/148에서 DEFERRED로 결정 — 회귀가 아니라 의도된 제약)."""
+    ctx = _multi_ctx({"amount": 220_000_000})
+    fails = check_g_calc("<p>취득세는 2억 2,000만원입니다.</p>", ctx)
+    assert len(fails) > 0
+    assert all(f["gate"] == "G-CALC" for f in fails)
+
+
+# ── Duplicate Value 테스트: 자동차_취등록세_계산기 (Level 0 substring matching 유지 확인) ──
+
+def test_duplicate_value_car_acquisition_tax_level0_behavior_unchanged():
+    """자동차_취등록세_계산기는 STEP146 감사에서 2/4 example이 내부적으로 중복된
+    금액(standard_acquisition_tax == acquisition_tax)을 갖는 것으로 확인된 유일한
+    계산기다. 이 테스트는 그 한계를 '고치는' 것이 아니라, ANY COMPLETE 구현 이후에도
+    기존 Level 0(단순 substring 매칭) 동작이 그대로 유지됨을 확인한다: 중복 값 하나만
+    본문에 등장해도 해당 example의 서로 다른 두 필드가 모두 '충족'된 것으로 오인되어
+    PASS 처리된다(의도된 제약 — CALC_VALUE_VALIDATION 범위 밖)."""
+    calc = {"slug": "자동차_취등록세_계산기", "name": "자동차 취등록세 계산기", "category": "부동산/기타"}
+    ctx = build_example_context(calc)
+    assert ctx is not None and len(ctx["verified_examples"]) == 4
+
+    result_0 = ctx["verified_examples"][0]["result"]
+    assert result_0["standard_acquisition_tax"] == result_0["acquisition_tax"]
+    amount = result_0["acquisition_tax"]
+
+    # 값 하나만 한 번 언급 — 실제로는 두 개의 서로 다른 필드(과세표준/최종세액)를
+    # 검증해야 하지만, Level 0 substring 매칭은 이를 구분하지 못하고 두 필드 모두
+    # '등장함'으로 처리한다.
+    body = f"<p>취등록세 관련 금액은 {_format_krw(amount)[0]} 하나뿐입니다.</p>"
+    fails = check_g_calc(body, ctx)
+    assert fails == []

@@ -77,7 +77,12 @@ def _format_krw(amount: int) -> list[str]:
     """
     정수 원화 금액 → 본문에서 검색 가능한 표기 변형 목록.
     14400000 → ['1,440만원', '1,440만 원', '1440만원', ...]
-    105600   → ['105,600원', '105600원']
+    105600   → ['105,600원', '105600원', '105,600 원', '105600 원']
+
+    CALCMATE-BLOG-QUALITY-STEP148/149: "원" 앞에 공백이 있는 표기("1,100,000 원")도
+    기존 "원" 직결 표기와 동일하게 인식하도록 마지막 변형 쌍에 공백 버전을 추가한다
+    (저위험 확장 — 억 단위는 이번 범위에서 다루지 않음). 기존 "만 원"(공백 포함)
+    변형과는 자릿수 표기 자체가 달라 중복이 발생하지 않는다.
     """
     variants: list[str] = []
     if amount <= 0:
@@ -91,7 +96,7 @@ def _format_krw(amount: int) -> list[str]:
         rem = amount % 10_000
         variants += [f"{man:,}만 {rem:,}원", f"{man}만 {rem}원"]
 
-    variants += [f"{amount:,}원", f"{amount}원"]
+    variants += [f"{amount:,}원", f"{amount}원", f"{amount:,} 원", f"{amount} 원"]
     return variants
 
 
@@ -136,45 +141,80 @@ def check_g_calc(
     intent: str | None = None,
 ) -> list[dict]:
     """
-    example_context.verified_examples[].result 의 검증된 금액이
-    본문 텍스트에 하나 이상 등장하는지 확인한다.
-    (CALCMATE-BLOG-QUALITY-STEP140: content/calculator/example_builder.py::
-    build_example_context()가 실제로 반환하는 키 이름("verified_examples")과
-    일치시킴 — 과거 "examples" 키는 어떤 production caller도 실제로 채워
-    보낸 적이 없어 하위호환 처리를 별도로 두지 않았다, STEP139 확인)
+    example_context.verified_examples[].result 중 "완전하게"(해당 example의 모든
+    checkable amount가 전부) 본문에 등장하는 example이 하나 이상 있으면 통과한다
+    (ANY COMPLETE — CALCMATE-BLOG-QUALITY-STEP147/148/149 Contract v1).
+
+    verified_examples 전체가 본문에 등장할 것을 요구하지 않는다 — article prompt는
+    "계산 예시" 1개만 요구하므로(STEP143/144), 그중 하나만 정확히 서술되어 있으면
+    충분하다고 본다. CALC_VALUE_MISMATCH(본문에 등장한 숫자 자체의 재계산 검증)는
+    이번 Contract 범위 밖이다 — 따라서 "example[0]은 완전·정확, example[1]은 다른
+    값(틀림)"인 본문도 PASS로 판정된다(하나라도 완전한 example이 있으면 충분).
 
     - documents intent: 절차 안내 글이므로 계산 결과 미인용 — 면제
-    - total 필드 있으면 total만, 없으면 개별 컴포넌트 전체 검사
+    - example 내부에서 어떤 field를 검사할지는 _pick_check_amounts()를 그대로
+      재사용(total 필드 있으면 total만 — four-insurances 특수 규칙 포함, 변경 없음)
+    - checkable amount가 0개인 example(예: 365일 미만 퇴직금 0원 케이스)은
+      "완전"으로도 "불완전"으로도 세지 않고 판정 대상에서 제외한다(vacuous truth로
+      자동 PASS되는 것을 방지 — 이 규칙이 없으면 0원 예외 example을 가진 계산기가
+      본문 내용과 무관하게 항상 통과해버린다)
+    - verified_examples 전체에 checkable amount가 하나도 없으면(NO_CHECKABLE_VALUE)
+      빈 list를 반환한다 — 별도 status 필드를 추가하지 않는다. writer.py가
+      `not _g_calc_fails`로만 pass 여부를 판단하므로(STEP148 STEP10 확인), "완전
+      통과"와 "애초에 검증 대상 없음"을 외부 계약에서는 구분하지 않는다(둘 다
+      "문제 없음"을 의미하므로 writer.py 변경 없이 그대로 호환된다).
 
-    Returns: gate fail dict 목록
+    Returns: gate fail dict 목록. 완전한 example이 하나라도 있으면 [](빈 리스트).
+    checkable example이 존재하는데 전부 불완전하면, 그 example들의 미등장 필드를
+    각각 실패로 담아 반환한다(반환 schema는 기존과 동일하게 유지 — 새 schema 없음).
     """
     if intent == "documents":
         return []  # 서류 안내 글은 계산 결과 인용 불필요
 
-    fails: list[dict] = []
     examples = (example_context or {}).get("verified_examples") or []
     if not examples:
-        return fails
+        return []
 
     text = _strip_html(body_html)
 
+    # 1) checkable amount가 있는 example만 모은다(0개인 example은 판정에서 제외).
+    checkable_examples: list[tuple[int, list[tuple[str, int]]]] = []
     for idx, ex in enumerate(examples):
         result = ex.get("result") or {}
         if not result:
             continue
-
         amounts = _pick_check_amounts(result)
+        if not amounts:
+            continue
+        checkable_examples.append((idx, amounts))
+
+    if not checkable_examples:
+        return []  # NO_CHECKABLE_VALUE — 실질 PASS(빈 list), 별도 status 없음
+
+    # 2) 완전한(모든 checkable amount가 본문에 등장하는) example이 하나라도 있으면 PASS.
+    incomplete: list[tuple[int, list[tuple[str, int, list[str]]]]] = []
+    for idx, amounts in checkable_examples:
+        missing = []
         for field, amount in amounts:
             variants = _format_krw(amount)
             if not any(v in text for v in variants):
-                fails.append({
-                    "gate": "G-CALC",
-                    "grade": "major",
-                    "detail": (
-                        f"예시 {idx + 1}번 '{field}' = {amount:,}원 -> "
-                        f"본문에 미등장 (예상 표기: {variants[:2]})"
-                    ),
-                })
+                missing.append((field, amount, variants))
+        if not missing:
+            return []  # 이 example이 완전함 — ANY COMPLETE 충족, 즉시 PASS
+        incomplete.append((idx, missing))
+
+    # 3) 여기까지 왔으면 checkable example이 있었지만 전부 불완전함(EXAMPLE_MISSING).
+    fails: list[dict] = []
+    for idx, missing in incomplete:
+        for field, amount, variants in missing:
+            fails.append({
+                "gate": "G-CALC",
+                "grade": "major",
+                "detail": (
+                    f"예시 {idx + 1}번 '{field}' = {amount:,}원 -> "
+                    f"본문에 미등장 (예상 표기: {variants[:2]})"
+                ),
+            })
     return fails
 
 
