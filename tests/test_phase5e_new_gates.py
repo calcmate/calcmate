@@ -362,9 +362,10 @@ class TestRunIntegrityGatesExtended:
     def test_new_gates_in_all_gates(self):
         """G-LEGAL-CURRENT / G-CONSISTENCY / G-H2 가 pass 목록에 포함."""
         body = (
-            "<h2>지급 대상</h2><p>해당자.</p>"
+            "<h2>지급 대상</h2><p>해당자. 무주택 세대주는 주거 목적 중간정산을 신청할 수 있습니다.</p>"
             "<h2>제외 대상</h2><p>미해당자.</p>"
-            "<h2>계산 방법</h2><p>총액은 600만원입니다.</p>"
+            "<h2>계산 방법</h2><p>총액은 600만원입니다. 주택 구입 또는 전세보증금 마련을 목적으로 하는 "
+            "경우 중간정산 요건을 확인합니다.</p>"
             "<h2>FAQ</h2><dl><dt>Q</dt><dd>A</dd></dl>"
         )
         ctx = {"examples": [{"inputs": {}, "result": {"total": 6_000_000}}]}
