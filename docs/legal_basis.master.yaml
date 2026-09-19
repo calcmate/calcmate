@@ -135,6 +135,51 @@ severance-pay:
           - "징계해고인 경우 퇴직금을 받을 수 없"
           - "비위행위에 의한 징계해고인 경우 퇴직금"
           - "징계해고를 당한 경우 퇴직금을 지급받지 못"
+      - item: "주거 목적 중간정산 요건(무주택자)"
+        value: "무주택 세대주"
+        effective_year: 2026
+        legal_basis: "근로자퇴직급여보장법 시행령 제3조"
+        source: "고용노동부"
+        applies_to: "무주택 세대주"
+        requires_in_content_for_intents:
+          - "eligibility"
+        forbidden_in_content:
+          - "36개월"
+          - "5년 이상"
+          - "10년 이상"
+          - "기간 요건"
+      - item: "주거 목적 중간정산 목적(주택 구입)"
+        value: "주택 구입"
+        effective_year: 2026
+        legal_basis: "근로자퇴직급여보장법 시행령 제3조"
+        source: "고용노동부"
+        applies_to: "무주택 세대주"
+        requires_in_content_for_intents:
+          - "eligibility"
+      - item: "주거 목적 중간정산 목적(전세보증금)"
+        value: "전세보증금"
+        effective_year: 2026
+        legal_basis: "근로자퇴직급여보장법 시행령 제3조"
+        source: "고용노동부"
+        applies_to: "무주택 세대주"
+        requires_in_content_for_intents:
+          - "eligibility"
+      - item: "근로기준법 제36조 오인용 금지"
+        value: "근로기준법 제36조"
+        effective_year: 2026
+        legal_basis: "근로자퇴직급여보장법 제9조"
+        source: "고용노동부"
+        applies_to: "퇴직금 지급기한 관련"
+        forbidden_in_content:
+          - "근로기준법 제36조"
+      - item: "근로자퇴직급여 보장법 제8조 오인용 금지"
+        value: "근로자퇴직급여 보장법 제8조"
+        effective_year: 2026
+        legal_basis: "근로자퇴직급여보장법 제9조"
+        source: "고용노동부"
+        applies_to: "퇴직금 지급기한 조항"
+        forbidden_in_content:
+          - "근로자퇴직급여 보장법 제8조"
   # --- registry v2 (Phase A: 읽기전용 미러) ---
   slug: severance-pay
   category: 노무/급여
@@ -449,6 +494,14 @@ four-insurances:
         forbidden_in_content:
           - "6,170,000원"
           - "6170000원"
+      - item: "부가가치세 무관 언급 금지"
+        value: "부가가치세"
+        effective_year: 2026
+        legal_basis: "부가가치세법"
+        source: "국세청"
+        applies_to: "4대보험 계산과 무관"
+        forbidden_in_content:
+          - "부가가치세"
 
 연말정산_환급액_계산기:
   name: 연말정산 환급액 계산기
