@@ -198,13 +198,19 @@ def get_article_prompt(calc: dict, seo: dict = None, faq: list = None, example_c
     seo = seo or {}
     example_str = json.dumps(example_context, ensure_ascii=False) if example_context else "제공된 계산 데이터 없음"
 
-    # 템플릿 분기 — H2 제목 이름을 명시적으로 지정하고 섹션 번호 prefix 없음
+    # intent 결정: 명시적 intent > category 기반 자동 결정
+    if intent is None:
+        intent = _get_intent_from_category(calc)
+
+    # 템플릿 분기 — intent별 H2 구조 정의
     if intent == "eligibility":
         structure = (
             "<h2>지급 대상</h2> — 대상자 중심 문제제기 및 수급 자격 요건\n"
             "<h2>근로시간 조건</h2> — 주 15시간 이상 등 충족해야 할 기준\n"
             "<h2>제외 대상</h2> — 지급받지 못하는 예외 상황\n"
             "<h2>계산 방법</h2> — 공식+계산 근거+법적 근거\n"
+            "<h2>계산 예시</h2> — 실제 데이터 기반 구체적 계산 과정\n"
+            "<h2>주의사항</h2> — 자주 발생하는 오류와 한계\n"
             "<h2>FAQ</h2> — <dl><dt>...</dt><dd>...</dd></dl> 형식, 최소 5문항\n"
         )
         system_instructions = (
@@ -229,11 +235,74 @@ def get_article_prompt(calc: dict, seo: dict = None, faq: list = None, example_c
             "<h2>FAQ</h2> — <dl><dt>...</dt><dd>...</dd></dl> 형식, 최소 5문항\n"
         )
         system_instructions = "작성 규칙: 'howto' 의도에 맞춰, 계산기 사용 절차와 예시를 상세히 서술하라."
-    else:  # 기본값(calculator)
+    elif intent == "calculator":
+        structure = (
+            "<h2>계산 원리</h2> — 계산 공식 유래와 계산 원리\n"
+            "<h2>지급 조건</h2> — 대상 조건, 제외 조건, 중요 기준\n"
+            "<h2>계산 예시</h2> — 실제 데이터 기반 구체적 계산 과정\n"
+            "<h2>주의사항</h2> — 자주 발생하는 오류와 한계\n"
+            "<h2>FAQ</h2> — <dl><dt>...</dt><dd>...</dd></dl> 형식, 최소 5문항\n"
+        )
+        system_instructions = "작성 규칙: 'calculator' 의도에 맞춰, 계산 원리, 지급 조건, 계산 예시를 상세히 다룬다."
+    elif intent == "health_metric":
+        # BMI, 체질량지수 등 건강 지표 계산기
+        structure = (
+            "<h2>계산 원리</h2> — 계산 원리 설명(공식의 유래·역사적 배경은 이용자의 이해에 실질적으로 도움이 될 때만 1~2문장 이내로 간단히 언급하고, 그 외에는 계산 방법과 원리 자체에 집중한다)\n"
+            "<h2>계산 방법</h2> — 단계별 계산 절차와 예시\n"
+            "<h2>판정 기준</h2> — 결과 수치별 등급/구간 해석\n"
+            "<h2>해석 방법</h2> — 결과 수치의 의미와 활용법\n"
+            "<h2>주의사항</h2> — 측정 시 주의점과 한계\n"
+            "<h2>FAQ</h2> — <dl><dt>...</dt><dd>...</dd></dl> 형식, 최소 5문항\n"
+        )
+        system_instructions = "작성 규칙: 건강 지표 계산기 특성에 맞춰 계산 원리, 판정 기준, 해석 방법을 상세히 다룬다."
+    elif intent == "labor_money":
+        # 퇴직금, 연차수당, 주휴수당 등 근로 급여 계산기
         structure = (
             "<h2>계산 원리</h2> — 법적 근거 첫 문장 명시 + 계산 단계 설명 + 예시 2개\n"
             "<h2>지급 조건</h2> — 대상 조건, 제외 조건, 중요 기준\n"
+            "<h2>계산 방법</h2> — 공식+계산 단계 설명+예시 2개\n"
+            "<h2>계산 예시</h2> — 실제 데이터 기반 구체적 계산 과정\n"
             "<h2>주의사항</h2> — 자주 발생하는 오류, 잘못 이해하는 부분(3항목 이상)\n"
+            "<h2>FAQ</h2> — <dl><dt>...</dt><dd>...</dd></dl> 형식, 최소 5문항\n"
+        )
+        system_instructions = "작성 규칙: 근로 급여 계산기 특성에 맞춰 계산 원리, 지급 조건, 계산 방법, 예시를 상세히 다룬다."
+    elif intent == "welfare_benefit":
+        # 실업급여, 육아휴직급여 등 복지 급여
+        structure = (
+            "<h2>지급 조건</h2> — 수급 자격, 제외 대상, 중요 기준\n"
+            "<h2>지급 대상</h2> — 수급 자격 요건과 대상자 범위\n"
+            "<h2>계산 방법</h2> — 급여 산정 공식과 계산 단계\n"
+            "<h2>신청 방법</h2> — 신청 절차, 필요 서류, 기한\n"
+            "<h2>주의사항</h2> — 자주 발생하는 오류와 주의점\n"
+            "<h2>FAQ</h2> — <dl><dt>...</dt><dd>...</dd></dl> 형식, 최소 5문항\n"
+        )
+        system_instructions = "작성 규칙: 복지 급여 계산기 특성에 맞춰 지급 조건, 대상, 계산 방법, 신청 방법을 상세히 다룬다."
+    elif intent == "tax_insurance":
+        # 세금, 사회보험, 연말정산, 4대보험
+        structure = (
+            "<h2>계산 원리</h2> — 법적 근거와 계산 원리\n"
+            "<h2>납부/공제 기준</h2> — 과세 표준, 공제 항목, 세율/보험료율\n"
+            "<h2>계산 예시</h2> — 실제 데이터 기반 구체적 계산 과정\n"
+            "<h2>주의사항</h2> — 자주 발생하는 오류와 한계\n"
+            "<h2>FAQ</h2> — <dl><dt>...</dt><dd>...</dd></dl> 형식, 최소 5문항\n"
+        )
+        system_instructions = "작성 규칙: 세금/보험 계산기 특성에 맞춰 계산 원리, 납부/공제 기준, 계산 예시를 상세히 다룬다."
+    elif intent == "housing_finance":
+        # 전세/월세, 부동산중개보수
+        structure = (
+            "<h2>계산 원리</h2> — 계산 공식과 산출 근거\n"
+            "<h2>적용 기준</h2> — 적용 대상, 조건, 기준 금액\n"
+            "<h2>계산 예시</h2> — 실제 데이터 기반 구체적 계산 과정\n"
+            "<h2>주의사항</h2> — 자주 발생하는 오류와 한계\n"
+            "<h2>FAQ</h2> — <dl><dt>...</dt><dd>...</dd></dl> 형식, 최소 5문항\n"
+        )
+        system_instructions = "작성 규칙: 주택/금융 계산기 특성에 맞춰 계산 원리, 적용 기준, 계산 예시를 상세히 다룬다."
+    else:  # general_calculator (기본값)
+        structure = (
+            "<h2>계산 원리</h2> — 계산 공식 유래와 계산 원리\n"
+            "<h2>계산 방법</h2> — 단계별 계산 절차와 예시\n"
+            "<h2>계산 예시</h2> — 실제 데이터 기반 구체적 계산 과정\n"
+            "<h2>주의사항</h2> — 자주 발생하는 오류와 한계\n"
             "<h2>FAQ</h2> — <dl><dt>...</dt><dd>...</dd></dl> 형식, 최소 5문항\n"
         )
         system_instructions = "작성 규칙: 계산기 중심의 구조를 유지하며, 계산 원리와 주의사항을 상세히 다룬다."
