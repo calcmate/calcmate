@@ -22,6 +22,51 @@ QUALITY = (
     "- 업데이트 내역·콘텐츠 생성일·검수일 등 내부 운영 정보 표기 절대 금지."
 )
 
+# 계산기 카테고리 → intent 매핑 (기존 category를 intent로 매핑)
+_CATEGORY_TO_INTENT = {
+    # health_metric: BMI, 체질량지수 등 건강 지표
+    '건강/체질량지수': 'health_metric',
+    '건강': 'health_metric',
+    '건강/피트니스': 'health_metric',
+    
+    # labor_money: 퇴직금, 연차수당, 주휴수당 등 근로 급여
+    '퇴직/연차': 'labor_money',
+    '퇴직/연차/기타': 'labor_money',
+    '노무/급여': 'labor_money',
+    '노무/급여/기타': 'labor_money',
+    
+    # welfare_benefit: 실업급여, 육아휴직급여 등 복지 급여
+    '고용/실업': 'welfare_benefit',
+    '고용/실업/기타': 'welfare_benefit',
+    # '고용/보험'은 4대보험 등 사회보험으로 tax_insurance로 분류
+    '고용/보험': 'tax_insurance',
+    
+    # tax_insurance: 세금, 사회보험, 연말정산, 4대보험
+    '세금': 'tax_insurance',
+    '세금/환급': 'tax_insurance',
+    '사회보험': 'tax_insurance',
+    '세금/기타': 'tax_insurance',
+    '세금/정부혜택': 'tax_insurance',
+    
+    # housing_finance: 전세/월세, 부동산중개보수
+    '부동산': 'housing_finance',
+    '부동산/중개': 'housing_finance',
+    '부동산/임대': 'housing_finance',
+    
+    # general_calculator: 나머지 계산기들
+    '기타': 'general_calculator',
+    '기타/일반': 'general_calculator',
+    '연차/휴가': 'general_calculator',
+    '기타/일반/기타': 'general_calculator',
+    '건강/기타': 'general_calculator',
+    '노동/고용법': 'general_calculator',
+}
+
+def _get_intent_from_category(calc: dict) -> str:
+    """계산기 카테고리에서 intent를 결정한다."""
+    category = calc.get('category', '') or ''
+    return _CATEGORY_TO_INTENT.get(category.strip(), 'general_calculator')
+
 
 def _ctx(calc: dict) -> str:
     return (f"계산기명: {calc.get('name','')}\n"
@@ -42,13 +87,64 @@ def get_seo_prompt(calc: dict) -> tuple:
 
 def get_faq_prompt(calc: dict, n_min: int = 6, n_max: int = 8, law_ssot_block: str = "") -> tuple:
     ssot_prefix = (law_ssot_block.strip() + "\n\n") if law_ssot_block.strip() else ""
+    # intent 결정: category 기반 자동 결정
+    intent = _get_intent_from_category(calc)
+    
+    # intent별 FAQ 필수 항목 정의
+    if intent == "health_metric":
+        # 건강 지표: 지급 조건 제외, 계산/판정/해석/주의/오해/관련지표
+        faq_requirements = (
+            "①계산 방법(공식·단계·예시) ②판정 기준(수치별 등급/구간 해석) "
+            "③해석 방법(결과 수치의 의미와 활용) ④주의사항(측정 시 주의점과 한계) "
+            "⑤자주 틀리는 부분(흔한 오해·실수·단위 오류) ⑥관련 지표/건강 관리(다른 지표와의 연계)."
+        )
+    elif intent == "labor_money":
+        # 근로 급여: 지급 조건 포함
+        faq_requirements = (
+            "①지급 조건(대상 조건·제외 조건·중요 기준) ②예외 사항(받지 못하는 경우) "
+            "③계산 기준(정확한 계산 방법) ④자주 틀리는 부분(흔한 오해·실수) "
+            "⑤법적 근거(관련 법령 조항) ⑥실무 팁(사용 시 주의사항)."
+        )
+    elif intent == "welfare_benefit":
+        # 복지 급여: 지급 조건 포함
+        faq_requirements = (
+            "①지급 조건(수급 자격·제외 대상·중요 기준) ②예외 사항(받지 못하는 경우) "
+            "③계산 기준(급여 산정 공식과 단계) ④자주 틀리는 부분(흔한 오해·실수) "
+            "⑤법적 근거(관련 법령 조항) ⑥실무 팁(신청·활용 시 주의사항)."
+        )
+    elif intent == "tax_insurance":
+        # 세금/사회보험: 납부/공제 기준 포함
+        faq_requirements = (
+            "①납부/공제 기준(과세표준·공제항목·세율/요율) ②예외 사항(감면·면제·예외) "
+            "③계산 기준(정확한 계산 방법) ④자주 틀리는 부분(흔한 오해·실수) "
+            "⑤법적 근거(관련 법령 조항) ⑥실무 팁(신고·납부 시 주의사항)."
+        )
+    elif intent == "housing_finance":
+        # 주택/금융: 비교/판단 기준 포함
+        faq_requirements = (
+            "①비교 기준(유불리 판단 핵심 지표) ②예외 사항(적용 제외·제한) "
+            "③계산 기준(정확한 계산 방법) ④자주 틀리는 부분(흔한 오해·실수) "
+            "⑤법적 근거(관련 법령 조항) ⑥실무 팁(선택·계약 시 주의사항)."
+        )
+    else:
+        # general_calculator 등 나머지: 기존 범용 구조 유지
+        faq_requirements = (
+            "①지급 조건(누가·언제 받는가) ②예외 사항(받지 못하는 경우) ③계산 기준(정확한 계산 방법) "
+            "④자주 틀리는 부분(흔한 오해·실수) ⑤법적 근거(관련 법령 조항) ⑥실무 팁(사용 시 주의사항)."
+        )
+    
     system = (ssot_prefix +
               f"너는 해당 분야 전문가다. 사용자가 실제로 궁금해하는 FAQ를 {n_min}~{n_max}개 작성한다.\n"
-              "반드시 다음 6가지를 모두 포함한다: "
-              "①지급 조건(누가·언제 받는가) ②예외 사항(받지 못하는 경우) ③계산 기준(정확한 계산 방법) "
-              "④자주 틀리는 부분(흔한 오해·실수) ⑤법적 근거(관련 법령 조항) ⑥실무 팁(사용 시 주의사항).\n"
+              f"반드시 다음 6가지를 모두 포함한다: {faq_requirements}\n"
               "각 답변은 구체적인 수치·조건·예외를 포함하고 2~4문장으로 작성한다. "
-              "'~할 수 있습니다', '~중요합니다' 같은 공허한 답변 금지.\n" + QUALITY + "\n"
+              "'~할 수 있습니다', '~중요합니다' 같은 공허한 답변 금지.\n"
+              "[FAQ 역할 분리]\n"
+              "- 본문을 읽은 뒤 사용자가 추가로 궁금해할 질문, 예외 상황, 적용 조건, "
+              "계산·신청 과정에서 헷갈리기 쉬운 실무 질문을 우선한다.\n"
+              "- 본문의 문장이나 문단을 그대로 복사하거나 어미만 바꿔 반복하지 않는다.\n"
+              "- 법률상 핵심 사실을 다시 확인해야 하는 경우에는 본문과 동일한 사실의 반복을 허용한다.\n"
+              "- 차별화를 위해 법률·수치·기간을 임의로 변경하거나 새로운 사실을 만들어내지 않는다.\n"
+              + QUALITY + "\n"
               '순수 JSON만 반환: {"faq":[{"question":"","answer":""}]}')
     return system, _ctx(calc)
 
