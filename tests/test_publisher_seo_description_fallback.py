@@ -102,3 +102,30 @@ def test_payload_no_network_call_made_beyond_mocked_post(monkeypatch):
     publisher._wordpress_api(seo, "<p>본문</p>", {}, CFG)
     assert len(calls) == 1
     assert calls[0].startswith("http://wp.test")
+
+
+# ── STEP125: WP POST payload slug 지원(하위호환 조건부 추가) ──
+
+def test_slug_present_included_in_payload(monkeypatch):
+    """seo에 slug가 있으면 payload에 그대로 포함된다."""
+    captured = _capture_payload(monkeypatch)
+    seo = {"seo_title": "제목", "seo_description": "설명", "slug": "severance-pay"}
+    publisher._wordpress_api(seo, "<p>본문</p>", {}, CFG)
+    assert captured["payload"]["slug"] == "severance-pay"
+
+
+def test_slug_absent_payload_unchanged_backward_compatible(monkeypatch):
+    """기존 호출자(main.py/retry_queue.py)처럼 slug를 전달하지 않으면
+    payload에 'slug' 키 자체가 생기지 않아 기존 동작과 완전히 동일하다."""
+    captured = _capture_payload(monkeypatch)
+    seo = {"seo_title": "제목", "seo_description": "설명"}
+    publisher._wordpress_api(seo, "<p>본문</p>", {}, CFG)
+    assert "slug" not in captured["payload"]
+
+
+def test_slug_empty_string_not_included(monkeypatch):
+    """slug가 빈 문자열이면(조건부 로직) payload에 포함되지 않는다."""
+    captured = _capture_payload(monkeypatch)
+    seo = {"seo_title": "제목", "seo_description": "설명", "slug": ""}
+    publisher._wordpress_api(seo, "<p>본문</p>", {}, CFG)
+    assert "slug" not in captured["payload"]

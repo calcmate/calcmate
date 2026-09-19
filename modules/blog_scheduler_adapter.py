@@ -365,9 +365,12 @@ def run_blog_once_wp(cfg: dict, max_count: int = 1, *, driver_id: str = None) ->
                 continue
 
             # 기존 publisher.py로 WordPress 발행
+            # STEP125: GOLDEN_10 contract의 slug를 명시적으로 전달 — WordPress가 title
+            # 기반으로 slug를 임의 생성하지 않고 의도된 slug를 사용하도록 한다.
             seo = {
                 "seo_title": gc.title,
                 "seo_description": gc.description,
+                "slug": gc.slug,
             }
             post_id = f"blog_{gc.slug}_{gc.intent}"
             pub_result = publisher.publish(post_id, seo, article, {}, cfg)

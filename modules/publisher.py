@@ -309,6 +309,10 @@ def _wordpress_api(seo, html, wp_imgs, cfg) -> dict:
         "content": full_content,
         "featured_media": thumb_info.get("media_id", 0)
     }
+    # STEP125: 호출자가 명시적으로 slug를 전달한 경우에만 payload에 포함한다(하위호환 —
+    # 기존 호출자(main.py/retry_queue.py)는 slug를 넘기지 않으므로 payload가 그대로 유지됨).
+    if seo.get("slug"):
+        payload["slug"] = seo["slug"]
     resp = requests.post(
         url, json=payload,
         auth=_wp_auth(cfg),
