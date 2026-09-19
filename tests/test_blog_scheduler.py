@@ -277,8 +277,35 @@ class TestIntentStructure:
         assert any("서류" in h for h in h2s), \
             f"documents missing '서류': {h2s}"
 
-    def test_calculator_structure(self, cfg):
-        """calculator → 계산 원리 포함."""
+    def test_calculator_structure(self, cfg, monkeypatch):
+        """calculator → 계산 원리 포함.
+
+        STEP126: STEP125에서 새로 연결된 run_integrity_gates()의 G-LEGAL-CURRENT가
+        four-insurances의 현행 SSOT 요율(건강보험료율 3.595%, 국민연금 4.75% —
+        modules/law_ssot.py::get_positive_check_items('four-insurances','calculator')
+        로 READ-ONLY 재확인함)을 포함하지 않는 기존 mock 콘텐츠를 major로 정상 차단하게
+        됐다. 이 테스트는 계산기/블로그 정합성 게이트가 아니라 순수 H2 구조만 검증하는
+        목적이므로, 이 테스트에 한해 mock 콘텐츠를 현행 SSOT 요율을 포함하도록 보정한다
+        (production 코드인 content/blog/writer.py::_mock_generate_intent()는 수정하지
+        않음 — 이 테스트 파일 내 monkeypatch로만 대체).
+        """
+        import content.blog.writer as W
+        original_mock = W._mock_generate_intent
+
+        def _patched_mock(post, seo, faq, intent):
+            if post.get("slug") == "four-insurances" and intent == "calculator":
+                return (
+                    "<p>4대보험의 계산 원리와 방법을 설명합니다.</p>"
+                    "<h2>계산 원리</h2><p>건강보험료율 3.595%, 국민연금 4.75% 등 "
+                    "현행 요율을 기준으로 계산합니다.</p>"
+                    "<h2>지급 조건</h2><p>대상 조건과 제외 조건을 확인합니다.</p>"
+                    "<h2>주의사항</h2><p>자주 발생하는 오류와 주의점을 안내합니다.</p>"
+                    "<h2>FAQ</h2><dl><dt>질문</dt><dd>답변</dd></dl>"
+                )
+            return original_mock(post, seo, faq, intent)
+
+        monkeypatch.setattr(W, "_mock_generate_intent", _patched_mock)
+
         from modules.blog_scheduler_adapter import run_blog_dry_run
         result = run_blog_dry_run(cfg, "four-insurances", "calculator")
         assert result["success"]
@@ -288,6 +315,17 @@ class TestIntentStructure:
                for h in re.findall(r'<h2[^>]*>(.*?)</h2>', html, re.DOTALL)]
         assert any("계산" in h for h in h2s), \
             f"calculator missing '계산': {h2s}"
+
+    def test_calculator_structure_still_blocks_stale_mock_content(self, cfg):
+        """STEP126 회귀 안전장치: 위 테스트가 monkeypatch로 우회하지 않는 '있는 그대로의'
+        기존 mock 콘텐츠(SSOT 현행 요율 미포함)는 여전히 G-LEGAL-CURRENT major로
+        차단되어야 한다 — run_integrity_gates()의 차단 정책이 이번 fixture 보정으로
+        약화되지 않았음을 확인한다."""
+        from modules.blog_scheduler_adapter import run_blog_dry_run
+        result = run_blog_dry_run(cfg, "four-insurances", "calculator")
+        assert result["success"]
+        html = open(result["result"]["output"], encoding="utf-8").read()
+        assert html == "", f"stale mock content should still be blocked(empty), got: {html[:80]!r}"
 
 
 # ============================================================
