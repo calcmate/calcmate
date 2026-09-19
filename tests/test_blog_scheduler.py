@@ -398,3 +398,202 @@ class TestGolden10HashAfterRun:
                 actual = hashlib.sha256(row[0].encode()).hexdigest()[:16]
                 assert actual == expected, f"{slug}: {expected} → {actual}"
         conn.close()
+
+
+# ============================================================
+# TEST 8: CALCMATE-BLOG-GEN-METADATA-05
+# auto_generate_blog_all()의 generation_metadata가 scheduler 저장 계층
+# (run_blog_once / run_blog_dry_run)의 기존 *_meta.json에 그대로 보존되는지 검증.
+# 실제 OpenAI API/WP/DB write는 전혀 발생하지 않는다(cfg fixture 자체가 mock 경로).
+# ============================================================
+
+class TestGenerationMetadataPersistence:
+
+    def test_run_blog_once_meta_json_contains_generation_metadata(self, cfg):
+        """run_blog_once()가 쓰는 기존 {slug}_{intent}_meta.json에 generation_metadata가
+        추가로 보존되고, 기존 필드(slug/intent/title/description/article_len/
+        article_hash/source/db_write/wordpress_call/image_call)는 그대로 유지된다."""
+        from modules.blog_scheduler_adapter import run_blog_once, _output_dir
+        run_blog_once(cfg, max_count=1)
+
+        out = _output_dir(cfg)
+        meta_files = list(out.glob("*/*_meta.json"))
+        assert meta_files, "meta.json이 하나도 생성되지 않음"
+        meta = json.loads(meta_files[0].read_text(encoding="utf-8"))
+
+        # 기존 필드 보존 확인(삭제/이름변경 없음)
+        for key in ("slug", "intent", "title", "description", "article_len",
+                   "article_hash", "source", "db_write", "wordpress_call", "image_call"):
+            assert key in meta, f"기존 필드 유실: {key}"
+
+        # 신규 generation_metadata 필드 존재 + mock 경로 기대값(cfg fixture에 OPENAI_API_KEY 없음)
+        assert "generation_metadata" in meta
+        gm = meta["generation_metadata"]
+        assert gm is not None, "generation_metadata가 None으로 유실됨"
+        assert gm["generation_mode"] == "mock"
+        assert gm["provider"] is None
+        assert gm["model"] is None
+        assert gm["prompt_hash"] is None
+        assert isinstance(gm["input_hash"], str) and gm["input_hash"]
+        assert gm["generation_started_at"]
+        assert gm["generation_completed_at"]
+        assert gm["config_source"] == "unknown"  # cfg fixture는 load_config()를 거치지 않음
+        # STEP6: driver_id는 새로 발명하지 않는다 — run_blog_once()가 auto_generate_blog_all()
+        # 호출 시 driver_id를 전달하지 않으므로(이번 STEP에서도 변경하지 않음) "unknown" 그대로.
+        assert gm["driver_id"] == "unknown"
+
+    def test_run_blog_dry_run_meta_json_contains_generation_metadata(self, cfg):
+        """run_blog_dry_run()의 meta.json에도 동일하게 generation_metadata가 보존된다."""
+        from modules.blog_scheduler_adapter import run_blog_dry_run, _output_dir
+        result = run_blog_dry_run(cfg, "severance-pay", "eligibility")
+        assert result["success"]
+
+        meta_path = Path(result["result"]["output"]).with_name(
+            "severance-pay_eligibility_meta.json")
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+        for key in ("slug", "intent", "article_len", "article_hash", "source", "db_write"):
+            assert key in meta, f"기존 필드 유실: {key}"
+
+        assert "generation_metadata" in meta
+        gm = meta["generation_metadata"]
+        assert gm is not None
+        assert gm["generation_mode"] == "mock"
+        assert gm["input_hash"]
+
+    def test_missing_generation_metadata_does_not_crash_adapter(self, cfg, monkeypatch):
+        """auto_generate_blog_all()이 (구버전 호출 등으로) generation_metadata 없는
+        result를 반환해도 adapter가 죽지 않아야 한다 — result.get()으로 안전하게 처리."""
+        import modules.blog_scheduler_adapter as A
+
+        def _fake_no_metadata(cfg, calc, save=False, intent=None, driver_id=None):
+            return {
+                "slug": calc.get("slug", ""), "name": calc.get("name", ""),
+                "intent": intent, "article_content": "<p>본문</p>",
+                "raw_article_content": "<p>본문</p>", "len": 10, "blocked": False,
+                "integrity_passed": [], "integrity_failed": [], "legal_current_fails": [],
+                # generation_metadata 키 자체가 없는 구버전 형태를 흉내낸다.
+            }
+        monkeypatch.setattr(A, "auto_generate_blog_all", _fake_no_metadata)
+
+        from modules.blog_scheduler_adapter import run_blog_dry_run
+        result = run_blog_dry_run(cfg, "severance-pay", "eligibility")
+        assert result["success"]
+
+        meta_path = Path(result["result"]["output"]).with_name(
+            "severance-pay_eligibility_meta.json")
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        assert meta.get("generation_metadata") is None
+
+
+# ============================================================
+# TEST 9: CALCMATE-BLOG-GEN-METADATA-10
+# adapter 3함수(run_blog_once/run_blog_dry_run/run_blog_once_wp)가 driver_id를
+# auto_generate_blog_all()까지 정확히 전달하는지 검증한다. 실제 OpenAI/WP 호출은
+# 발생하지 않는다(cfg fixture 자체가 mock 경로 + WP 미연결 상태).
+# ============================================================
+
+class TestDriverIdPropagation:
+
+    def test_run_blog_once_driver_id_reaches_generation_metadata(self, cfg):
+        """run_blog_once(driver_id=...) → auto_generate_blog_all(driver_id=...)
+        → generation_metadata.driver_id로 정확히 전달되는지 확인."""
+        from modules.blog_scheduler_adapter import run_blog_once, _output_dir
+        run_blog_once(cfg, max_count=1, driver_id="test-driver")
+
+        out = _output_dir(cfg)
+        meta_files = list(out.glob("*/*_meta.json"))
+        assert meta_files, "meta.json이 하나도 생성되지 않음"
+        meta = json.loads(meta_files[0].read_text(encoding="utf-8"))
+        assert meta["generation_metadata"]["driver_id"] == "test-driver"
+
+    def test_run_blog_dry_run_driver_id_reaches_generation_metadata(self, cfg):
+        """run_blog_dry_run(driver_id=...)도 동일한 전달 경로를 검증."""
+        from modules.blog_scheduler_adapter import run_blog_dry_run
+        result = run_blog_dry_run(cfg, "severance-pay", "eligibility",
+                                  driver_id="test-driver")
+        assert result["success"]
+
+        meta_path = Path(result["result"]["output"]).with_name(
+            "severance-pay_eligibility_meta.json")
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        assert meta["generation_metadata"]["driver_id"] == "test-driver"
+
+    def test_run_blog_once_wp_driver_id_survives_wp_not_ready_delegation(self, cfg):
+        """run_blog_once_wp()는 WP 미연결 시 run_blog_once()에 위임한다
+        (cfg fixture에 WORDPRESS_* 키가 없어 is_wordpress_ready(cfg)==False,
+        자연스럽게 위임 분기를 탄다). 이 위임 경로에서도 driver_id가 유실되지
+        않고 그대로 generation_metadata까지 도달해야 한다."""
+        from modules.blog_scheduler_adapter import run_blog_once_wp, _output_dir
+        run_blog_once_wp(cfg, max_count=1, driver_id="test-driver")
+
+        out = _output_dir(cfg)
+        meta_files = list(out.glob("*/*_meta.json"))
+        assert meta_files, "meta.json이 하나도 생성되지 않음(위임 분기 미작동)"
+        meta = json.loads(meta_files[0].read_text(encoding="utf-8"))
+        assert meta["generation_metadata"]["driver_id"] == "test-driver"
+
+    def test_omitted_driver_id_still_defaults_to_unknown(self, cfg):
+        """driver_id를 넘기지 않는 기존 호출 방식은 계속 'unknown'으로 동작해야
+        한다(기존 TestGenerationMetadataPersistence 테스트와 모순되지 않음)."""
+        from modules.blog_scheduler_adapter import run_blog_once, _output_dir
+        run_blog_once(cfg, max_count=1)
+
+        out = _output_dir(cfg)
+        meta_files = list(out.glob("*/*_meta.json"))
+        meta = json.loads(meta_files[0].read_text(encoding="utf-8"))
+        assert meta["generation_metadata"]["driver_id"] == "unknown"
+
+
+# ============================================================
+# TEST 10: METADATA-17 bytes-level article_hash contract
+# ============================================================
+
+class TestArticleHashUsesPersistedBytes:
+    """article_hash는 text 재인코딩이 아니라 실제 article.html bytes의 hash여야 한다."""
+
+    def test_meta_hash_matches_article_html_read_bytes(self, cfg):
+        from modules.blog_scheduler_adapter import run_blog_once, _output_dir
+
+        result = run_blog_once(cfg, max_count=1, driver_id="metadata_smoke_test")
+        assert result["produced"] == 1
+        html_path = _output_dir(cfg) / "severance-pay" / "severance-pay_eligibility.html"
+        meta_path = html_path.with_name("severance-pay_eligibility_meta.json")
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+        expected = hashlib.sha256(html_path.read_bytes()).hexdigest()[:16]
+        assert meta["article_hash"] == expected
+
+    def test_newline_storage_is_hashed_after_bytes_are_final(self, cfg):
+        """LF가 포함된 HTML도 저장된 bytes 기준으로 검증한다 (OS 독립)."""
+        from modules.blog_scheduler_adapter import run_blog_once, _output_dir
+
+        run_blog_once(cfg, max_count=1)
+        html_path = _output_dir(cfg) / "severance-pay" / "severance-pay_eligibility.html"
+        meta_path = html_path.with_name("severance-pay_eligibility_meta.json")
+        raw = html_path.read_bytes()
+        assert b"\n" in raw
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        assert meta["article_hash"] == hashlib.sha256(raw).hexdigest()[:16]
+
+    def test_generation_metadata_does_not_enter_html(self, cfg):
+        from modules.blog_scheduler_adapter import run_blog_once, _output_dir
+
+        run_blog_once(cfg, max_count=1, driver_id="metadata_smoke_test")
+        html_path = _output_dir(cfg) / "severance-pay" / "severance-pay_eligibility.html"
+        html = html_path.read_text(encoding="utf-8")
+        for marker in ("generation_metadata", "driver_id", "metadata_smoke_test",
+                       "prompt_hash", "input_hash", "config_source"):
+            assert marker not in html
+
+    def test_driver_id_does_not_change_hash_for_same_html(self, cfg):
+        from modules.blog_scheduler_adapter import run_blog_once, _output_dir
+
+        run_blog_once(cfg, max_count=1, driver_id="driver-A")
+        html_path = _output_dir(cfg) / "severance-pay" / "severance-pay_eligibility.html"
+        first_hash = hashlib.sha256(html_path.read_bytes()).hexdigest()[:16]
+
+        run_blog_once(cfg, max_count=1, driver_id="driver-B")
+        second_hash = hashlib.sha256(html_path.read_bytes()).hexdigest()[:16]
+        assert first_hash == second_hash
+

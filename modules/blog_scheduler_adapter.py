@@ -99,7 +99,7 @@ class BlogScheduleRequest:
 # Blog Scheduler Adapter — core
 # ============================================================
 
-def run_blog_once(cfg: dict, max_count: int = 10) -> dict:
+def run_blog_once(cfg: dict, max_count: int = 10, *, driver_id: str = None) -> dict:
     """Scheduler 호환 run_once_fn(contract).
     
     Golden 10 전체를 대상으로 blog 콘텐츠를 생성하고
@@ -149,15 +149,20 @@ def run_blog_once(cfg: dict, max_count: int = 10) -> dict:
         
         # blog 콘텐츠 생성
         try:
-            result = auto_generate_blog_all(cfg, calc, save=False, intent=gc.intent)
+            result = auto_generate_blog_all(cfg, calc, save=False, intent=gc.intent,
+                                            driver_id=driver_id)
             article = result.get("article_content", "")
-            
+
             # isolated output 저장
             slug_dir = output_dir / gc.slug
             slug_dir.mkdir(parents=True, exist_ok=True)
             
             html_file = slug_dir / f"{gc.slug}_{gc.intent}.html"
-            html_file.write_text(article, encoding="utf-8")
+            # Hash the exact bytes written to disk. Using write_text() on Windows can
+            # translate newlines after hashing, so write_bytes() is intentional.
+            article_bytes = article.encode("utf-8")
+            html_file.write_bytes(article_bytes)
+            article_hash = hashlib.sha256(article_bytes).hexdigest()[:16]
             
             meta = {
                 "slug": gc.slug,
@@ -165,11 +170,15 @@ def run_blog_once(cfg: dict, max_count: int = 10) -> dict:
                 "title": gc.title,
                 "description": gc.description,
                 "article_len": len(article),
-                "article_hash": hashlib.sha256(article.encode("utf-8")).hexdigest()[:16],
+                "article_hash": article_hash,
                 "source": "scheduler_blog_adapter",
                 "db_write": False,
                 "wordpress_call": False,
                 "image_call": False,
+                # METADATA-05: auto_generate_blog_all()이 이미 반환하는 generation_metadata를
+                # 그대로 보존한다(METADATA-03/04에서 확정된 구조를 다시 계산/변경하지 않음).
+                # 기존 필드는 하나도 삭제/이름변경하지 않았다.
+                "generation_metadata": result.get("generation_metadata"),
             }
             meta_file = slug_dir / f"{gc.slug}_{gc.intent}_meta.json"
             meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2),
@@ -218,7 +227,7 @@ def run_blog_once(cfg: dict, max_count: int = 10) -> dict:
     }
 
 
-def run_blog_dry_run(cfg: dict, slug: str, intent: str) -> dict:
+def run_blog_dry_run(cfg: dict, slug: str, intent: str, *, driver_id: str = None) -> dict:
     """단일 콘텐츠 Scheduler dry-run.
     
     Args:
@@ -241,21 +250,27 @@ def run_blog_dry_run(cfg: dict, slug: str, intent: str) -> dict:
     hash_before = _record_hash(cfg, slug, "before")
     
     try:
-        result = auto_generate_blog_all(cfg, calc, save=False, intent=intent)
+        result = auto_generate_blog_all(cfg, calc, save=False, intent=intent,
+                                        driver_id=driver_id)
         article = result.get("article_content", "")
-        
+
         output_dir = _output_dir(cfg) / slug
         output_dir.mkdir(parents=True, exist_ok=True)
         
         html_file = output_dir / f"{slug}_{intent}.html"
-        html_file.write_text(article, encoding="utf-8")
+        # Keep metadata hash aligned with the exact bytes persisted in article.html.
+        article_bytes = article.encode("utf-8")
+        html_file.write_bytes(article_bytes)
+        article_hash = hashlib.sha256(article_bytes).hexdigest()[:16]
         
         meta = {
             "slug": slug, "intent": intent,
             "article_len": len(article),
-            "article_hash": hashlib.sha256(article.encode("utf-8")).hexdigest()[:16],
+            "article_hash": article_hash,
             "source": "scheduler_blog_dry_run",
             "db_write": False,
+            # METADATA-05: run_blog_once()와 동일하게 generation_metadata를 그대로 보존.
+            "generation_metadata": result.get("generation_metadata"),
         }
         meta_file = output_dir / f"{slug}_{intent}_meta.json"
         meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2),
@@ -284,7 +299,7 @@ def run_blog_dry_run(cfg: dict, slug: str, intent: str) -> dict:
 # Blog Scheduler → WordPress Publisher 연결
 # ============================================================
 
-def run_blog_once_wp(cfg: dict, max_count: int = 1) -> dict:
+def run_blog_once_wp(cfg: dict, max_count: int = 1, *, driver_id: str = None) -> dict:
     """Blog Line → WordPress 발행 (Scheduler run_once_fn 호환).
 
     Calculator Line의 run_calculator_once()와 동일한 시그니처.
@@ -301,7 +316,7 @@ def run_blog_once_wp(cfg: dict, max_count: int = 1) -> dict:
 
     if not is_wordpress_ready(cfg):
         # WordPress 미연결 시 isolated output만 생성
-        return run_blog_once(cfg, max_count=max_count)
+        return run_blog_once(cfg, max_count=max_count, driver_id=driver_id)
 
     output_dir = _output_dir(cfg)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -340,7 +355,8 @@ def run_blog_once_wp(cfg: dict, max_count: int = 1) -> dict:
         hash_before = _record_hash(cfg, gc.slug, "before")
 
         try:
-            result = auto_generate_blog_all(cfg, calc, save=False, intent=gc.intent)
+            result = auto_generate_blog_all(cfg, calc, save=False, intent=gc.intent,
+                                            driver_id=driver_id)
             article = result.get("article_content", "")
 
             if not article or len(article) < 100:
@@ -365,6 +381,10 @@ def run_blog_once_wp(cfg: dict, max_count: int = 1) -> dict:
                     "wp_post_id": pub_result.get("wp_post_id", ""),
                     "wp_permalink": pub_result.get("wp_permalink", ""),
                     "article_len": len(article),
+                    # METADATA-05: 이 결과 항목이 이미 article_len 등 generation 결과값을
+                    # 추적하고 있으므로, run_blog_once()와 동일하게 generation_metadata도
+                    # 추가로 보존한다(publish 관련 필드는 전혀 변경하지 않음).
+                    "generation_metadata": result.get("generation_metadata"),
                 })
             else:
                 results.append({"slug": gc.slug, "intent": gc.intent,
