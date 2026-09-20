@@ -339,11 +339,11 @@ def _extra_published_blog_articles(cfg: dict) -> list[dict]:
     """
     try:
         from content.blog import GOLDEN_10
-        from adapters.db.factory import get_db_adapter
+        from adapters.db.factory import get_blog_article_storage_adapter
         from repositories.blog_article_repository import BlogArticleRepository
 
         golden10_slugs = {gc.slug for gc in GOLDEN_10}
-        rows = BlogArticleRepository(get_db_adapter(cfg)).list_all()
+        rows = BlogArticleRepository(get_blog_article_storage_adapter(cfg)).list_all()
     except Exception:
         return []
 

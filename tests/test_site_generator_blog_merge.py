@@ -3,7 +3,10 @@
 
 modules/site_generator.py의 GOLDEN_10 + blog_articles 병합 로직 검증(STEP186).
 실제 프로젝트 DB(data/blog_auto.db)는 전혀 건드리지 않는다 — adapters.db.factory
-.get_db_adapter를 monkeypatch해 tmp_path 위의 임시 SQLite로 완전히 격리한다.
+.get_blog_article_storage_adapter를 monkeypatch해 tmp_path 위의 임시 SQLite로
+완전히 격리한다(STEP191에서 site_generator.py의 실제 호출 대상이 get_db_adapter
+에서 get_blog_article_storage_adapter로 바뀌었으므로 mock 대상도 이에 맞춘다 —
+STEP192).
 """
 import re
 import sys
@@ -35,9 +38,10 @@ def _seed_extra_row(tmp_path, wp_post_id, slug, title="제목", desc="설명", w
 
 
 def _patched_db_adapter(tmp_path):
-    def fake_get_db_adapter(_cfg):
+    def fake_get_blog_article_storage_adapter(_cfg):
         return SQLiteAdapter({"SQLITE_PATH": "test_merge.db", "_root": str(tmp_path)})
-    return mock.patch("adapters.db.factory.get_db_adapter", side_effect=fake_get_db_adapter)
+    return mock.patch("adapters.db.factory.get_blog_article_storage_adapter",
+                       side_effect=fake_get_blog_article_storage_adapter)
 
 
 def test_extra_published_blog_articles_excludes_golden10_slugs(tmp_path):
@@ -82,10 +86,11 @@ def test_generate_index_without_extra_rows_matches_golden10_only_behavior(tmp_pa
     """extra row가 하나도 없으면(=신규 없음) 기존 동작과 완전히 동일해야 한다."""
     SQLiteAdapter({"SQLITE_PATH": "test_merge_empty.db", "_root": str(tmp_path)})
 
-    def fake_get_db_adapter(_cfg):
+    def fake_get_blog_article_storage_adapter(_cfg):
         return SQLiteAdapter({"SQLITE_PATH": "test_merge_empty.db", "_root": str(tmp_path)})
 
-    with mock.patch("adapters.db.factory.get_db_adapter", side_effect=fake_get_db_adapter):
+    with mock.patch("adapters.db.factory.get_blog_article_storage_adapter",
+                     side_effect=fake_get_blog_article_storage_adapter):
         html = sg.generate_index({"SITE_URL": "https://calcmate.kr"})
 
     for gc in GOLDEN_10:
@@ -107,9 +112,10 @@ def test_generate_sitemap_merges_without_duplicates(tmp_path):
 def test_extra_published_blog_articles_returns_empty_on_db_error():
     """DB 접근이 실패해도(어댑터 미구성 등) 메인 페이지 생성 자체가 죽지 않도록
     빈 리스트를 반환해야 한다."""
-    def failing_get_db_adapter(_cfg):
+    def failing_get_blog_article_storage_adapter(_cfg):
         raise RuntimeError("db unavailable")
 
-    with mock.patch("adapters.db.factory.get_db_adapter", side_effect=failing_get_db_adapter):
+    with mock.patch("adapters.db.factory.get_blog_article_storage_adapter",
+                     side_effect=failing_get_blog_article_storage_adapter):
         extras = sg._extra_published_blog_articles({})
     assert extras == []
