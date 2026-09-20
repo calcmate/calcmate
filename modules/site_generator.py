@@ -182,6 +182,25 @@ a:hover{text-decoration:underline}
   .cm-calc-grid{grid-template-columns:1fr}
   .cm-nav-links a:not(:last-child){display:none}
 }
+
+/* ── 통합 검색 + category 필터(STEP196) ── */
+.cm-filter-bar{margin-bottom:var(--sp-3)}
+.cm-search-input{width:100%;box-sizing:border-box;padding:12px 16px;
+  border:1.5px solid var(--c-border);border-radius:var(--r-input);
+  font-size:15px;margin-bottom:var(--sp-2);background:var(--c-card);color:var(--c-text)}
+.cm-search-input:focus{outline:none;border-color:var(--c-primary)}
+.cm-cat-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:var(--sp-1)}
+.cm-cat-btn{flex:0 0 auto;padding:8px 16px;border-radius:var(--r-badge);
+  border:1.5px solid var(--c-border);background:var(--c-card);color:var(--c-text-sub);
+  font-size:13px;font-weight:600;cursor:pointer;transition:border-color .15s,color .15s,background .15s}
+.cm-cat-btn:hover{border-color:var(--c-primary);color:var(--c-primary)}
+.cm-cat-btn.is-active{background:var(--c-primary);border-color:var(--c-primary);color:#fff}
+.cm-filter-empty{font-size:14px;color:var(--c-text-sub);text-align:center;padding:var(--sp-3) 0}
+
+@media(max-width:480px){
+  .cm-cat-filters{gap:6px}
+  .cm-cat-btn{font-size:12px;padding:7px 12px}
+}
 """
 
 
@@ -189,6 +208,49 @@ a:hover{text-decoration:underline}
 
 def _esc(s: str) -> str:
     return _html.escape(str(s))
+
+
+# ── category 통합 필터(STEP196) ─────────────────────────────────────
+# 계산기 registry / WP category 원본 문자열은 이 매핑 밖에서 절대 수정하지
+# 않는다 — normalize_category()는 순수 함수로 표시용 UI key/표시명만 계산한다.
+_CATEGORY_MAP = {
+    "노무/급여": "labor_pay",
+    "노동/고용법": "labor_pay",
+    "고용/보험": "employment_insurance",
+    "노무/급여/보험": "employment_insurance",
+    "세금/정부혜택": "tax_benefit",
+    "세금": "tax_benefit",
+    "부동산/임대": "real_estate",
+    "병역/공무": "military_service",
+    "건강/피트니스": "health",
+    "건강": "health",
+}
+
+_CATEGORY_LABELS = {
+    "labor_pay": "노무/급여",
+    "employment_insurance": "고용/보험",
+    "tax_benefit": "세금/정부혜택",
+    "real_estate": "부동산/임대",
+    "military_service": "병역/공무",
+    "health": "건강",
+    "other": "기타",
+}
+
+_CATEGORY_FILTER_ORDER = [
+    "labor_pay", "employment_insurance", "tax_benefit",
+    "real_estate", "military_service", "health", "other",
+]
+
+
+def normalize_category(raw_category: str) -> tuple[str, str]:
+    """원본 category 문자열 → (UI category key, UI 표시명).
+
+    매핑에 없는 문자열은 ("other", "기타")로 fallback한다 — 신규 category가
+    추가돼도 기존 필터 버튼은 깨지지 않으며, 화면에서 카드 자체가 사라지지도
+    않는다("기타" 버킷으로 노출).
+    """
+    key = _CATEGORY_MAP.get(raw_category or "", "other")
+    return key, _CATEGORY_LABELS[key]
 
 
 def _nav(site_url: str) -> str:
@@ -300,6 +362,44 @@ def _extra_published_blog_articles(cfg: dict) -> list[dict]:
     return sorted(extras, key=lambda a: a["slug"])
 
 
+def _guide_calculator_links(cfg: dict) -> dict:
+    """blog_articles.slug → {"calculator_slug", "category"} 매핑(STEP196).
+
+    calculator_id가 있으면 그 계산기를 우선 사용하고(Golden10 10건은 전부 이
+    경로로 해석됨, STEP195 실측), calculator_id가 없는 글(예: bmi-calculator)은
+    글 slug와 동일한 slug를 가진 계산기로 보조 매칭한다. 어느 쪽도 없으면
+    결과에서 제외되며 호출부는 이를 category 미해석("기타")으로 취급한다.
+
+    calculators/blog_articles 테이블은 조회만 하며 어떤 것도 수정하지 않는다.
+    조회 실패(DB 미구성 등) 시 빈 dict를 반환해 메인 페이지 생성이 깨지지
+    않도록 한다.
+    """
+    try:
+        from adapters.db.factory import get_db_adapter, get_blog_article_storage_adapter
+        from repositories.blog_article_repository import BlogArticleRepository
+
+        db = get_db_adapter(cfg)
+        calc_rows = db.get_all("calculators")
+        calc_by_id = {c.get("id"): c for c in calc_rows}
+        calc_by_slug = {c.get("slug"): c for c in calc_rows}
+        rows = BlogArticleRepository(get_blog_article_storage_adapter(cfg)).list_all()
+    except Exception:
+        return {}
+
+    links = {}
+    for row in rows:
+        slug = row.get("slug", "")
+        if not slug:
+            continue
+        calc = calc_by_id.get(row.get("calculator_id")) or calc_by_slug.get(slug)
+        if calc:
+            links[slug] = {
+                "calculator_slug": calc.get("slug", ""),
+                "category": calc.get("category", ""),
+            }
+    return links
+
+
 def generate_index(cfg: dict) -> str:
     u = cfg.get("SITE_URL", "https://calcmate.kr").rstrip("/")
     site_name = cfg.get("SITE_NAME", "CalcMate")
@@ -316,38 +416,68 @@ def generate_index(cfg: dict) -> str:
          if reg.get(s) and e.get("status") != "HOLD"],
         key=lambda x: x[1],
     )]
-    calc_cards = "\n".join(
-        f'<a class="cm-calc-card" href="{u}/{slug}/" aria-label="{_esc(calc.get("name", slug))}">'
-        f'<span class="cm-calc-emoji" aria-hidden="true">{_esc(calc.get("emoji", "🧮"))}</span>'
-        f'<div class="cm-calc-name">{_esc(calc.get("name", slug))}</div>'
-        f'<div class="cm-calc-desc">{_esc((_v3.get(slug) or {}).get("card_desc") or "")}</div>'
-        f'</a>'
-        for slug in _slugs
-        if (calc := reg.get(slug))
-    )
+    _calc_card_html = []
+    for slug in _slugs:
+        calc = reg.get(slug)
+        if not calc:
+            continue
+        card_desc = (_v3.get(slug) or {}).get("card_desc") or ""
+        cat_raw = (_v3.get(slug) or {}).get("category", calc.get("category", ""))
+        cat_key, cat_label = normalize_category(cat_raw)
+        search_text = f'{calc.get("name", slug)} {card_desc} {cat_label}'
+        _calc_card_html.append(
+            f'<a class="cm-calc-card" href="{u}/{slug}/" aria-label="{_esc(calc.get("name", slug))}" '
+            f'data-category-key="{cat_key}" data-category-raw="{_esc(cat_raw)}" '
+            f'data-content-type="calculator" data-search-text="{_esc(search_text)}">'
+            f'<span class="cm-calc-emoji" aria-hidden="true">{_esc(calc.get("emoji", "🧮"))}</span>'
+            f'<div class="cm-calc-name">{_esc(calc.get("name", slug))}</div>'
+            f'<div class="cm-calc-desc">{_esc(card_desc)}</div>'
+            f'</a>'
+        )
+    calc_cards = "\n".join(_calc_card_html)
 
     # Golden10 블로그 카드 — 계산기 그리드와 동일한 카드 패턴 재사용(STEP 16-B)
     from content.blog import GOLDEN_10
-    blog_cards = "\n".join(
-        f'<a class="cm-calc-card" href="{u}/blog/{gc.slug}/" aria-label="{_esc(gc.title)}">'
-        f'<span class="cm-calc-emoji" aria-hidden="true">📖</span>'
-        f'<div class="cm-calc-name">{_esc(gc.title)}</div>'
-        f'<div class="cm-calc-desc">{_esc(gc.description)}</div>'
-        f'</a>'
-        for gc in GOLDEN_10
-    )
+    _guide_links = _guide_calculator_links(cfg)
+
+    _blog_card_html = []
+    for gc in GOLDEN_10:
+        link = _guide_links.get(gc.slug)
+        cat_raw = link["category"] if link else ""
+        cat_key, cat_label = normalize_category(cat_raw)
+        calc_slug_attr = f' data-calculator-slug="{_esc(link["calculator_slug"])}"' if link else ""
+        search_text = f'{gc.title} {gc.description} {cat_label}'
+        _blog_card_html.append(
+            f'<a class="cm-calc-card" href="{u}/blog/{gc.slug}/" aria-label="{_esc(gc.title)}" '
+            f'data-category-key="{cat_key}" data-category-raw="{_esc(cat_raw)}" '
+            f'data-content-type="guide" data-search-text="{_esc(search_text)}"{calc_slug_attr}>'
+            f'<span class="cm-calc-emoji" aria-hidden="true">📖</span>'
+            f'<div class="cm-calc-name">{_esc(gc.title)}</div>'
+            f'<div class="cm-calc-desc">{_esc(gc.description)}</div>'
+            f'</a>'
+        )
+    blog_cards = "\n".join(_blog_card_html)
 
     # WP 자동등록 신규 블로그 카드(STEP186) — GOLDEN_10은 위에서 그대로 유지하고,
     # GOLDEN_10에 없는 blog_articles(publish)만 추가한다. GOLDEN_10 카드 자체의
     # 순서/개수/내용에는 어떤 영향도 주지 않는다(추가만, 대체 없음).
-    extra_blog_cards = "\n".join(
-        f'<a class="cm-calc-card" href="{u}/blog/{a["slug"]}/" aria-label="{_esc(a["title"])}">'
-        f'<span class="cm-calc-emoji" aria-hidden="true">📖</span>'
-        f'<div class="cm-calc-name">{_esc(a["title"])}</div>'
-        f'<div class="cm-calc-desc">{_esc(a["description"])}</div>'
-        f'</a>'
-        for a in _extra_published_blog_articles(cfg)
-    )
+    _extra_blog_card_html = []
+    for a in _extra_published_blog_articles(cfg):
+        link = _guide_links.get(a["slug"])
+        cat_raw = link["category"] if link else ""
+        cat_key, cat_label = normalize_category(cat_raw)
+        calc_slug_attr = f' data-calculator-slug="{_esc(link["calculator_slug"])}"' if link else ""
+        search_text = f'{a["title"]} {a["description"]} {cat_label}'
+        _extra_blog_card_html.append(
+            f'<a class="cm-calc-card" href="{u}/blog/{a["slug"]}/" aria-label="{_esc(a["title"])}" '
+            f'data-category-key="{cat_key}" data-category-raw="{_esc(cat_raw)}" '
+            f'data-content-type="guide" data-search-text="{_esc(search_text)}"{calc_slug_attr}>'
+            f'<span class="cm-calc-emoji" aria-hidden="true">📖</span>'
+            f'<div class="cm-calc-name">{_esc(a["title"])}</div>'
+            f'<div class="cm-calc-desc">{_esc(a["description"])}</div>'
+            f'</a>'
+        )
+    extra_blog_cards = "\n".join(_extra_blog_card_html)
     if extra_blog_cards:
         blog_cards = blog_cards + "\n" + extra_blog_cards
 
@@ -360,6 +490,23 @@ def generate_index(cfg: dict) -> str:
       <p class="cm-hero-tagline">CalcMate — 실생활 계산기 모음</p>
       <p class="cm-hero-sub">필요한 계산을 쉽고 빠르게, 한곳에서 확인하세요.</p>
       <a class="cm-hero-btn" href="#calculators">계산기 시작하기</a>
+    </section>
+
+    <!-- 통합 검색 + category 필터(STEP196) -->
+    <section class="cm-filter-bar" aria-label="계산기·가이드 검색 및 category 필터">
+      <input type="text" id="cm-search-input" class="cm-search-input"
+             placeholder="계산기 또는 가이드 검색" aria-label="계산기 또는 가이드 검색">
+      <div class="cm-cat-filters" role="group" aria-label="category 필터">
+        <button type="button" class="cm-cat-btn is-active" data-filter-category="all">전체</button>
+        <button type="button" class="cm-cat-btn" data-filter-category="labor_pay">노무/급여</button>
+        <button type="button" class="cm-cat-btn" data-filter-category="employment_insurance">고용/보험</button>
+        <button type="button" class="cm-cat-btn" data-filter-category="tax_benefit">세금/정부혜택</button>
+        <button type="button" class="cm-cat-btn" data-filter-category="real_estate">부동산/임대</button>
+        <button type="button" class="cm-cat-btn" data-filter-category="military_service">병역/공무</button>
+        <button type="button" class="cm-cat-btn" data-filter-category="health">건강</button>
+        <button type="button" class="cm-cat-btn" data-filter-category="other">기타</button>
+      </div>
+      <p id="cm-filter-empty" class="cm-filter-empty" hidden>검색 결과가 없습니다.</p>
     </section>
 
     <!-- 계산기 그리드 -->
@@ -401,7 +548,41 @@ def generate_index(cfg: dict) -> str:
 
     {_footer(u)}
   </div>
-</main>"""
+</main>
+<script>
+(function(){{
+  var searchInput = document.getElementById('cm-search-input');
+  var catButtons = document.querySelectorAll('.cm-cat-btn');
+  var emptyMsg = document.getElementById('cm-filter-empty');
+  var cards = document.querySelectorAll('.cm-calc-card[data-category-key]');
+  var activeCategory = 'all';
+
+  function normalizeText(s) {{ return (s || '').toLowerCase(); }}
+
+  function applyFilter() {{
+    var query = normalizeText(searchInput ? searchInput.value : '');
+    var visibleCount = 0;
+    cards.forEach(function(card){{
+      var matchesCategory = activeCategory === 'all' || card.getAttribute('data-category-key') === activeCategory;
+      var matchesSearch = !query || normalizeText(card.getAttribute('data-search-text')).indexOf(query) !== -1;
+      var show = matchesCategory && matchesSearch;
+      card.style.display = show ? '' : 'none';
+      if (show) visibleCount++;
+    }});
+    if (emptyMsg) emptyMsg.hidden = visibleCount !== 0;
+  }}
+
+  if (searchInput) searchInput.addEventListener('input', applyFilter);
+  catButtons.forEach(function(btn){{
+    btn.addEventListener('click', function(){{
+      catButtons.forEach(function(b){{ b.classList.remove('is-active'); }});
+      btn.classList.add('is-active');
+      activeCategory = btn.getAttribute('data-filter-category');
+      applyFilter();
+    }});
+  }});
+}})();
+</script>"""
 
     return _page(
         title=f"{site_name} — 퇴직금·주휴수당·실업급여·4대보험 무료 계산기",
