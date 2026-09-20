@@ -299,7 +299,8 @@ def run_blog_dry_run(cfg: dict, slug: str, intent: str, *, driver_id: str = None
 # Blog Scheduler → WordPress Publisher 연결
 # ============================================================
 
-def run_blog_once_wp(cfg: dict, max_count: int = 1, *, driver_id: str = None) -> dict:
+def run_blog_once_wp(cfg: dict, max_count: int = 1, *, driver_id: str = None,
+                     status: str = "publish") -> dict:
     """Blog Line → WordPress 발행 (Scheduler run_once_fn 호환).
 
     Calculator Line의 run_calculator_once()와 동일한 시그니처.
@@ -307,6 +308,12 @@ def run_blog_once_wp(cfg: dict, max_count: int = 1, *, driver_id: str = None) ->
 
     생성 → 검증 → 기존 publisher.py로 WordPress 발행.
     DB write = 0 (articles 테이블에도 기록하지 않음).
+
+    status: publisher.publish()에 그대로 전달되는 WP post_status("publish"|"draft").
+    기본값 "publish"이므로 기존 호출부(main.py::resolve_blog_publish_fn의 자동
+    scheduler 경로 — status 인자 없이 호출)는 전혀 영향받지 않는다. CALCMATE-STEP170:
+    scripts/run_blog_scheduler.py::cmd_publish()가 이 인자에 명시적으로 "draft"를
+    전달해 실제 WP에는 쓰지만 비공개 초안으로만 남기는 TEST-DRAFT 경로를 만든다.
 
     Returns:
         {"produced": int, "reason": str, "results": list}
@@ -341,16 +348,20 @@ def run_blog_once_wp(cfg: dict, max_count: int = 1, *, driver_id: str = None) ->
                             "status": "ERROR", "reason": "not_in_db"})
             continue
 
-        # 중복 검사: WordPress에 이미 같은 slug가 있는지 확인
-        try:
-            existing = _check_wp_duplicate(cfg, gc.slug)
-            if existing:
-                results.append({"slug": gc.slug, "intent": gc.intent,
-                                "status": "SKIP_DUPLICATE",
-                                "wp_post_id": existing.get("wp_post_id", "")})
-                continue
-        except Exception:
-            pass  # WP 연결 실패 시 발행 시도
+        # 중복 검사: WordPress에 이미 같은 slug가 있는지 확인 (CALCMATE-STEP172:
+        # FAIL-CLOSED — 중복 없음이 실제로 확인(confirmed=True)되지 않으면 발행하지
+        # 않는다. "검사 실패했지만 발행 시도"는 더 이상 하지 않는다.)
+        dup = _check_wp_duplicate(cfg, gc.slug)
+        if not dup.get("confirmed"):
+            results.append({"slug": gc.slug, "intent": gc.intent,
+                            "status": "DUPLICATE_CHECK_FAILED",
+                            "reason": dup.get("error", "unknown")})
+            continue
+        if dup.get("exists"):
+            results.append({"slug": gc.slug, "intent": gc.intent,
+                            "status": "SKIP_DUPLICATE",
+                            "wp_post_id": dup.get("wp_post_id") or ""})
+            continue
 
         hash_before = _record_hash(cfg, gc.slug, "before")
 
@@ -373,7 +384,7 @@ def run_blog_once_wp(cfg: dict, max_count: int = 1, *, driver_id: str = None) ->
                 "slug": gc.slug,
             }
             post_id = f"blog_{gc.slug}_{gc.intent}"
-            pub_result = publisher.publish(post_id, seo, article, {}, cfg)
+            pub_result = publisher.publish(post_id, seo, article, {}, cfg, status=status)
             pub_status = pub_result.get("status", "published")
 
             if pub_status in ("published", "draft"):
@@ -416,15 +427,33 @@ def run_blog_once_wp(cfg: dict, max_count: int = 1, *, driver_id: str = None) ->
             "results": results}
 
 
-def _check_wp_duplicate(cfg: dict, slug: str) -> dict | None:
-    """WordPress에 이미 같은 slug의 게시물이 있는지 확인 (READ-ONLY)."""
-    import modules.publisher as publisher
+def _check_wp_duplicate(cfg: dict, slug: str) -> dict:
+    """WordPress에 이미 같은 slug의 게시물이 있는지 확인 (READ-ONLY, FAIL-CLOSED).
+
+    CALCMATE-STEP172: 이전에는 조회 실패/예외/비정상 응답을 전부 "중복 없음"(None)으로
+    되돌려 호출부가 발행을 강행했다(FAIL-OPEN). 이제는 항상 다음 계약의 dict를
+    반환하며, "중복 없음이 실제로 확인되었는지"(confirmed)와 "중복이 존재하는지"
+    (exists)를 분리한다 — confirmed=False면 호출부는 반드시 발행을 금지해야 한다.
+
+    또한 조회 파라미터의 slug는 실제 publisher.publish() → _wordpress_api()가
+    WP payload["slug"]로 전송하는 값(= 이 함수의 slug 인자, run_blog_once_wp()가
+    gc.slug를 그대로 넘긴다)과 정확히 동일해야 한다. 이전에는 f"blog_{slug}"로
+    조회해 실제 게시되는 slug(접두사 없음)와 어긋나 진짜 중복을 찾지 못했다.
+
+    반환:
+      {"exists": bool, "confirmed": bool, "wp_post_id": str|None,
+       "slug": str|None, "error": str|None}
+
+    "중복 없음"으로 확정되는 유일한 경우: HTTP 200 + JSON list + 빈 리스트.
+    그 외(모든 non-200, timeout, connection error, JSON decode 실패, list가 아닌
+    응답, 함수 내부의 예상 밖 예외 등)는 전부 confirmed=False다.
+    """
+    wp_url = cfg.get("WORDPRESS_URL", "")
+    if not wp_url:
+        return {"exists": False, "confirmed": False, "wp_post_id": None,
+                "slug": None, "error": "no_wp_url"}
+
     try:
-        # WordPress에서 slug로 검색
-        wp_url = cfg.get("WORDPRESS_URL", "")
-        if not wp_url:
-            return None
-        # publisher의 get_post 재사용 — slug 기반 검색은 REST API 파라미터로
         import requests
         auth = None
         username = cfg.get("WORDPRESS_USERNAME", "")
@@ -433,14 +462,35 @@ def _check_wp_duplicate(cfg: dict, slug: str) -> dict | None:
             auth = (username, app_password)
         resp = requests.get(
             f"{wp_url}/wp-json/wp/v2/posts",
-            params={"slug": f"blog_{slug}", "per_page": 1},
+            params={"slug": slug, "per_page": 1},
             auth=auth, timeout=10,
         )
-        if resp.status_code == 200:
-            posts = resp.json()
-            if posts:
-                return {"wp_post_id": posts[0].get("id", ""),
-                        "slug": posts[0].get("slug", "")}
-    except Exception:
-        pass
-    return None
+    except Exception as e:
+        return {"exists": False, "confirmed": False, "wp_post_id": None,
+                "slug": None, "error": f"request_error:{e}"}
+
+    if resp.status_code != 200:
+        return {"exists": False, "confirmed": False, "wp_post_id": None,
+                "slug": None, "error": f"http_{resp.status_code}"}
+
+    try:
+        posts = resp.json()
+    except Exception as e:
+        return {"exists": False, "confirmed": False, "wp_post_id": None,
+                "slug": None, "error": f"decode_error:{e}"}
+
+    if not isinstance(posts, list):
+        return {"exists": False, "confirmed": False, "wp_post_id": None,
+                "slug": None, "error": "unexpected_response_shape"}
+
+    try:
+        if posts:
+            return {"exists": True, "confirmed": True,
+                    "wp_post_id": posts[0].get("id"), "slug": posts[0].get("slug"),
+                    "error": None}
+    except Exception as e:
+        return {"exists": False, "confirmed": False, "wp_post_id": None,
+                "slug": None, "error": f"malformed_post_entry:{e}"}
+
+    return {"exists": False, "confirmed": True, "wp_post_id": None,
+            "slug": None, "error": None}

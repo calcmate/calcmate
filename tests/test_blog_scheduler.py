@@ -598,3 +598,310 @@ class TestArticleHashUsesPersistedBytes:
         second_hash = hashlib.sha256(html_path.read_bytes()).hexdigest()[:16]
         assert first_hash == second_hash
 
+
+# ============================================================
+# TEST 11: CALCMATE-STEP170 — run_blog_once_wp() status 전달 계약
+#
+# STEP167/168에서 확인된 cmd_publish()의 "draft 모드" 주석과 실제 동작(status
+# 미전달 → publisher.publish() 기본값 "publish")의 불일치를 해결한 STEP170 변경을
+# deterministic하게(실제 WP 미호출) 검증한다. 실제 requests.post 대신
+# modules.publisher.publish를 spy로 대체한다.
+# ============================================================
+
+class TestRunBlogOnceWpStatusContract:
+
+    def _wp_ready_cfg(self, cfg):
+        wp_cfg = dict(cfg)
+        wp_cfg.update({
+            "WORDPRESS_URL": "https://example.invalid",
+            "WORDPRESS_USERNAME": "u", "WORDPRESS_APP_PASSWORD": "p",
+        })
+        return wp_cfg
+
+    def _patch_common(self, monkeypatch, captured: dict):
+        """실제 네트워크(WP GET 중복확인 + WP POST)를 전부 spy로 대체."""
+        import modules.blog_scheduler_adapter as adapter
+        import modules.publisher as publisher
+
+        # CALCMATE-STEP172: _check_wp_duplicate()는 이제 dict(confirmed/exists 계약)를
+        # 반환한다("중복 없음, 확인됨"으로 스텁 — 이 클래스의 목적은 status 전달 검증).
+        monkeypatch.setattr(adapter, "_check_wp_duplicate",
+                            lambda cfg, slug: {"exists": False, "confirmed": True,
+                                                "wp_post_id": None, "slug": None, "error": None})
+
+        def _spy_publish(post_id, seo, html, image_urls, cfg, *, status="publish",
+                         comment_status=None, category_name=None):
+            captured["status"] = status
+            captured["post_id"] = post_id
+            # 실제 modules.publisher.publish()의 반환 계약과 동일하게 매핑한다
+            # (publisher.py: res["status"] = "published" if status == "publish" else status).
+            return {"status": "published" if status == "publish" else status,
+                    "wp_post_id": "999", "wp_permalink": "https://example.invalid/p/999"}
+
+        monkeypatch.setattr(publisher, "publish", _spy_publish)
+
+    # ── Test A: TEST-DRAFT 경로 — status="draft"가 publisher.publish까지 전달 ──
+
+    def test_a_explicit_status_draft_reaches_publisher_publish(self, cfg, monkeypatch):
+        from modules.blog_scheduler_adapter import run_blog_once_wp
+
+        captured = {}
+        self._patch_common(monkeypatch, captured)
+        wp_cfg = self._wp_ready_cfg(cfg)
+
+        result = run_blog_once_wp(wp_cfg, max_count=1, driver_id="test-driver",
+                                  status="draft")
+
+        assert captured.get("status") == "draft"
+        assert result["produced"] == 1
+        assert result["results"][0]["status"] == "DRAFT"
+
+    # ── Test B: 기존 자동 scheduler 경로(status 인자 없음) 무영향 확인 ──
+
+    def test_b_default_status_still_publish_for_existing_callers(self, cfg, monkeypatch):
+        """status를 넘기지 않는 기존 호출(자동 scheduler 경로와 동일한 호출 형태)은
+        여전히 publisher.publish에 status="publish"가 전달되어야 한다 — STEP170이
+        기존 자동 발행 경로에 영향을 주지 않았음을 확인한다."""
+        from modules.blog_scheduler_adapter import run_blog_once_wp
+
+        captured = {}
+        self._patch_common(monkeypatch, captured)
+        wp_cfg = self._wp_ready_cfg(cfg)
+
+        result = run_blog_once_wp(wp_cfg, max_count=1, driver_id="test-driver")
+
+        assert captured.get("status") == "publish"
+        assert result["results"][0]["status"] == "PUBLISHED"
+
+
+# ── Test C: Dashboard mode label 표기 — CALCMATE-STEP170 ────────────────────
+#
+# dashboard.py는 import 시 Streamlit/스케줄러 스레드 기동 등 부작용이 있어(기존
+# tests/test_dashboard_*.py 컨벤션과 동일하게) 직접 import하지 않고, 소스 텍스트만
+# 읽어 표시 문구를 검증한다.
+
+class TestDashboardBlogModeLabel:
+
+    def test_draft_label_no_longer_claims_wp_draft(self):
+        import pathlib
+        src = pathlib.Path(__file__).resolve().parent.parent.joinpath("dashboard.py").read_text(encoding="utf-8")
+        assert "Draft (WP 초안)" not in src, "SAFE-DRY-RUN(WP 미호출)을 'WP 초안'으로 오표기하는 문구가 남아있음"
+        assert "Dry-Run (WP 미호출)" in src
+
+
+# ============================================================
+# TEST 12: CALCMATE-STEP172 — _check_wp_duplicate() FAIL-CLOSED + slug 매칭 정확성
+#
+# 이전(STEP171 감사에서 확인): 조회 실패/예외/비정상 응답을 전부 "중복 없음"(None)
+# 으로 되돌려 발행을 강행(FAIL-OPEN)했고, 조회 slug에 "blog_" 접두사가 붙어 실제
+# 게시 slug(접두사 없음)와 달라 진짜 중복도 찾지 못했다. 이번 STEP에서 둘 다
+# 수정했다. 실제 네트워크(requests.get/publisher.publish)는 전부 monkeypatch로
+# 대체하며, 실제 WP 호출은 발생하지 않는다.
+# ============================================================
+
+class TestCheckWpDuplicateFailClosed:
+
+    def _wp_ready_cfg(self, cfg):
+        wp_cfg = dict(cfg)
+        wp_cfg.update({
+            "WORDPRESS_URL": "https://example.invalid",
+            "WORDPRESS_USERNAME": "u", "WORDPRESS_APP_PASSWORD": "p",
+        })
+        return wp_cfg
+
+    def _patch_publish_spy(self, monkeypatch, captured: dict):
+        import modules.publisher as publisher
+
+        def _spy_publish(post_id, seo, html, image_urls, cfg, *, status="publish",
+                         comment_status=None, category_name=None):
+            captured["publish_called"] = captured.get("publish_called", 0) + 1
+            return {"status": "published" if status == "publish" else status,
+                    "wp_post_id": "999", "wp_permalink": "https://example.invalid/p/999"}
+
+        monkeypatch.setattr(publisher, "publish", _spy_publish)
+
+    # ── Test 1: duplicate 존재 → POST 금지 ──────────────────────────────────
+
+    def test_1_duplicate_exists_blocks_post(self, cfg, monkeypatch):
+        import requests
+        from modules.blog_scheduler_adapter import run_blog_once_wp
+
+        captured = {}
+        self._patch_publish_spy(monkeypatch, captured)
+
+        class _Resp:
+            status_code = 200
+            def json(self):
+                return [{"id": 123, "slug": "severance-pay"}]
+
+        monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp())
+        result = run_blog_once_wp(self._wp_ready_cfg(cfg), max_count=1, driver_id="test-driver")
+
+        assert result["results"][0]["status"] == "SKIP_DUPLICATE"
+        assert result["results"][0]["wp_post_id"] == 123
+        assert captured.get("publish_called", 0) == 0
+
+    # ── Test 2: duplicate 없음 → POST 허용 + 실제 게시 slug와 동일한 값으로 조회 ──
+
+    def test_2_no_duplicate_allows_post_and_queries_bare_slug(self, cfg, monkeypatch):
+        import requests
+        from modules.blog_scheduler_adapter import run_blog_once_wp
+
+        captured = {}
+        self._patch_publish_spy(monkeypatch, captured)
+        seen_params = {}
+
+        class _Resp:
+            status_code = 200
+            def json(self):
+                return []
+
+        def _fake_get(url, params=None, auth=None, timeout=None):
+            seen_params["slug"] = (params or {}).get("slug")
+            return _Resp()
+
+        monkeypatch.setattr(requests, "get", _fake_get)
+        result = run_blog_once_wp(self._wp_ready_cfg(cfg), max_count=1, driver_id="test-driver")
+
+        # 실제 게시(publisher.publish → payload["slug"] = seo["slug"] = gc.slug)와
+        # 동일한 값으로 조회해야 한다 — "blog_" 접두사가 붙어 있으면 FAIL.
+        assert seen_params["slug"] == "severance-pay"
+        assert result["results"][0]["status"] == "PUBLISHED"
+        assert captured.get("publish_called", 0) == 1
+
+    # ── Test 3: timeout → POST 금지 ──────────────────────────────────────────
+
+    def test_3_timeout_blocks_post(self, cfg, monkeypatch):
+        import requests
+        from modules.blog_scheduler_adapter import run_blog_once_wp
+
+        captured = {}
+        self._patch_publish_spy(monkeypatch, captured)
+
+        def _raise(*a, **k):
+            raise requests.exceptions.Timeout("simulated timeout")
+
+        monkeypatch.setattr(requests, "get", _raise)
+        result = run_blog_once_wp(self._wp_ready_cfg(cfg), max_count=1, driver_id="test-driver")
+
+        assert result["results"][0]["status"] == "DUPLICATE_CHECK_FAILED"
+        assert captured.get("publish_called", 0) == 0
+
+    # ── Test 4: connection error → POST 금지 ─────────────────────────────────
+
+    def test_4_connection_error_blocks_post(self, cfg, monkeypatch):
+        import requests
+        from modules.blog_scheduler_adapter import run_blog_once_wp
+
+        captured = {}
+        self._patch_publish_spy(monkeypatch, captured)
+
+        def _raise(*a, **k):
+            raise requests.exceptions.ConnectionError("simulated connection error")
+
+        monkeypatch.setattr(requests, "get", _raise)
+        result = run_blog_once_wp(self._wp_ready_cfg(cfg), max_count=1, driver_id="test-driver")
+
+        assert result["results"][0]["status"] == "DUPLICATE_CHECK_FAILED"
+        assert captured.get("publish_called", 0) == 0
+
+    # ── Test 5: HTTP 5xx → POST 금지 ─────────────────────────────────────────
+
+    def test_5_http_500_blocks_post(self, cfg, monkeypatch):
+        import requests
+        from modules.blog_scheduler_adapter import run_blog_once_wp
+
+        captured = {}
+        self._patch_publish_spy(monkeypatch, captured)
+
+        class _Resp:
+            status_code = 500
+            def json(self):
+                return []
+
+        monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp())
+        result = run_blog_once_wp(self._wp_ready_cfg(cfg), max_count=1, driver_id="test-driver")
+
+        assert result["results"][0]["status"] == "DUPLICATE_CHECK_FAILED"
+        assert captured.get("publish_called", 0) == 0
+
+    # ── Test 6: malformed JSON → POST 금지 ───────────────────────────────────
+
+    def test_6_malformed_json_blocks_post(self, cfg, monkeypatch):
+        import requests
+        from modules.blog_scheduler_adapter import run_blog_once_wp
+
+        captured = {}
+        self._patch_publish_spy(monkeypatch, captured)
+
+        class _Resp:
+            status_code = 200
+            def json(self):
+                raise ValueError("simulated JSON decode failure")
+
+        monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp())
+        result = run_blog_once_wp(self._wp_ready_cfg(cfg), max_count=1, driver_id="test-driver")
+
+        assert result["results"][0]["status"] == "DUPLICATE_CHECK_FAILED"
+        assert captured.get("publish_called", 0) == 0
+
+    # ── Test 7: 예상 밖 응답 구조(list가 아님) → POST 금지 ───────────────────
+
+    def test_7_unexpected_response_shape_blocks_post(self, cfg, monkeypatch):
+        import requests
+        from modules.blog_scheduler_adapter import run_blog_once_wp
+
+        captured = {}
+        self._patch_publish_spy(monkeypatch, captured)
+
+        class _Resp:
+            status_code = 200
+            def json(self):
+                return {}  # list가 아님
+
+        monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp())
+        result = run_blog_once_wp(self._wp_ready_cfg(cfg), max_count=1, driver_id="test-driver")
+
+        assert result["results"][0]["status"] == "DUPLICATE_CHECK_FAILED"
+        assert captured.get("publish_called", 0) == 0
+
+    # ── Test 8: 함수 내부 예상 밖 exception(list 내부 항목이 dict가 아님) → POST 금지 ──
+
+    def test_8_malformed_post_entry_exception_blocks_post(self, cfg, monkeypatch):
+        import requests
+        from modules.blog_scheduler_adapter import run_blog_once_wp
+
+        captured = {}
+        self._patch_publish_spy(monkeypatch, captured)
+
+        class _Resp:
+            status_code = 200
+            def json(self):
+                return [None]  # posts[0].get(...) 호출 시 AttributeError 유발
+
+        monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp())
+        result = run_blog_once_wp(self._wp_ready_cfg(cfg), max_count=1, driver_id="test-driver")
+
+        assert result["results"][0]["status"] == "DUPLICATE_CHECK_FAILED"
+        assert captured.get("publish_called", 0) == 0
+
+    # ── Test 9: HTTP 404 → "중복 없음"으로 취급하지 않음(POST 금지) ─────────
+
+    def test_9_http_404_is_not_treated_as_no_duplicate(self, cfg, monkeypatch):
+        import requests
+        from modules.blog_scheduler_adapter import run_blog_once_wp
+
+        captured = {}
+        self._patch_publish_spy(monkeypatch, captured)
+
+        class _Resp:
+            status_code = 404
+            def json(self):
+                return []
+
+        monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp())
+        result = run_blog_once_wp(self._wp_ready_cfg(cfg), max_count=1, driver_id="test-driver")
+
+        assert result["results"][0]["status"] == "DUPLICATE_CHECK_FAILED"
+        assert captured.get("publish_called", 0) == 0
+
