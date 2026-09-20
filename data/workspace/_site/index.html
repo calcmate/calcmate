@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#2563EB">
 <meta name="naver-site-verification" content="de4ad3f1575284b5a8ea58baab7bc7a77b7cf07e">
-<meta name="description" content="퇴직금, 주휴수당, 실업급여, 4대보험, 연차수당을 법령 기준으로 쉽고 빠르게 계산하세요. 대한민국 직장인을 위한 무료 계산기 플랫폼.">
-<meta property="og:title" content="CalcMate — 퇴직금·주휴수당·실업급여·4대보험 무료 계산기">
-<meta property="og:description" content="퇴직금, 주휴수당, 실업급여, 4대보험, 연차수당을 법령 기준으로 쉽고 빠르게 계산하세요. 대한민국 직장인을 위한 무료 계산기 플랫폼.">
+<meta name="description" content="필요한 계산을 쉽고 빠르게, 한곳에서 확인하세요. CalcMate에서 다양한 실생활 계산기를 간편하게 이용할 수 있습니다.">
+<meta property="og:title" content="CalcMate — 실생활 계산기 모음">
+<meta property="og:description" content="필요한 계산을 쉽고 빠르게, 한곳에서 확인하세요. CalcMate에서 다양한 실생활 계산기를 간편하게 이용할 수 있습니다.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://calcmate.kr/">
-<title>CalcMate — 퇴직금·주휴수당·실업급여·4대보험 무료 계산기</title>
+<title>CalcMate — 실생활 계산기 모음</title>
 <link rel="canonical" href="https://calcmate.kr/">
 <link rel="stylesheet" href="site.css">
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-EP2Q8035VF"></script>
@@ -23,30 +23,46 @@
   <div class="cm-wrap">
     <!-- Hero -->
     <section class="cm-hero">
-      <div class="cm-hero-logo">CalcMate</div>
-      <p class="cm-hero-tagline">CalcMate — 실생활 계산기 모음</p>
+      <h1 class="cm-hero-logo">CalcMate — 실생활 계산기 모음</h1>
       <p class="cm-hero-sub">필요한 계산을 쉽고 빠르게, 한곳에서 확인하세요.</p>
       <a class="cm-hero-btn" href="#calculators">계산기 시작하기</a>
+    </section>
+
+    <!-- 통합 검색 + category 필터(STEP196) -->
+    <section class="cm-filter-bar" aria-label="계산기·가이드 검색 및 category 필터">
+      <input type="text" id="cm-search-input" class="cm-search-input"
+             placeholder="계산기 또는 가이드 검색" aria-label="계산기 또는 가이드 검색">
+      <div class="cm-cat-filters" role="group" aria-label="category 필터">
+        <button type="button" class="cm-cat-btn is-active" data-filter-category="all">전체</button>
+        <button type="button" class="cm-cat-btn" data-filter-category="labor_pay">노무/급여</button>
+        <button type="button" class="cm-cat-btn" data-filter-category="employment_insurance">고용/보험</button>
+        <button type="button" class="cm-cat-btn" data-filter-category="tax_benefit">세금/정부혜택</button>
+        <button type="button" class="cm-cat-btn" data-filter-category="real_estate">부동산/임대</button>
+        <button type="button" class="cm-cat-btn" data-filter-category="military_service">병역/공무</button>
+        <button type="button" class="cm-cat-btn" data-filter-category="health">건강</button>
+        <button type="button" class="cm-cat-btn" data-filter-category="other">기타</button>
+      </div>
+      <p id="cm-filter-empty" class="cm-filter-empty" hidden>검색 결과가 없습니다.</p>
     </section>
 
     <!-- 계산기 그리드 -->
     <section class="cm-section" id="calculators" aria-labelledby="calc-grid-title">
       <h2 class="cm-section-title" id="calc-grid-title">많이 찾는 계산기</h2>
       <div class="cm-calc-grid">
-<a class="cm-calc-card" href="https://calcmate.kr/weekly-holiday-allowance/" aria-label="주휴수당 계산기"><span class="cm-calc-emoji" aria-hidden="true">💰</span><div class="cm-calc-name">주휴수당 계산기</div><div class="cm-calc-desc">주 15시간 이상 근무했다면 꼭 확인하세요</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/severance-pay/" aria-label="퇴직금 계산기"><span class="cm-calc-emoji" aria-hidden="true">💼</span><div class="cm-calc-name">퇴직금 계산기</div><div class="cm-calc-desc">근속기간과 평균임금으로 퇴직금을 계산해보세요</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/annual-leave-allowance/" aria-label="연차수당 계산기"><span class="cm-calc-emoji" aria-hidden="true">📅</span><div class="cm-calc-name">연차수당 계산기</div><div class="cm-calc-desc">미사용 연차를 수당으로 환산해보세요</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/unemployment-benefit/" aria-label="실업급여 계산기"><span class="cm-calc-emoji" aria-hidden="true">📋</span><div class="cm-calc-name">실업급여 계산기</div><div class="cm-calc-desc">고용보험 가입기간 기준 예상 수급액을 확인하세요</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/four-insurances/" aria-label="4대보험 계산기"><span class="cm-calc-emoji" aria-hidden="true">🏢</span><div class="cm-calc-name">4대보험 계산기</div><div class="cm-calc-desc">국민연금·건강보험·고용보험·산재보험 공제액 확인</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/연말정산_환급액_계산기/" aria-label="연말정산 환급액 계산기"><span class="cm-calc-emoji" aria-hidden="true">🧾</span><div class="cm-calc-name">연말정산 환급액 계산기</div><div class="cm-calc-desc">연간 납부 세금과 공제 항목으로 환급액을 계산해보세요</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/육아휴직_급여_계산기/" aria-label="육아휴직 급여 계산기"><span class="cm-calc-emoji" aria-hidden="true">👶</span><div class="cm-calc-name">육아휴직 급여 계산기</div><div class="cm-calc-desc">육아휴직 기간별 예상 급여를 확인해보세요</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/freelancer-tax-3p3/" aria-label="프리랜서 3.3% 원천징수 계산기"><span class="cm-calc-emoji" aria-hidden="true">🧮</span><div class="cm-calc-name">프리랜서 3.3% 원천징수 계산기</div><div class="cm-calc-desc">프리랜서·강사·작가 수입에서 3.3% 원천징수 세액과 실수령액을 계산해보세요</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/jeonse-vs-monthly/" aria-label="전세 vs 월세 비교 계산기"><span class="cm-calc-emoji" aria-hidden="true">🧮</span><div class="cm-calc-name">전세 vs 월세 비교 계산기</div><div class="cm-calc-desc">전세와 월세 조건을 비교해 어떤 게 더 유리한지 확인해보세요</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/annual-leave-remaining/" aria-label="연차 잔여일 계산기"><span class="cm-calc-emoji" aria-hidden="true">🧮</span><div class="cm-calc-name">연차 잔여일 계산기</div><div class="cm-calc-desc">근속개월수와 사용한 연차일수로 남은 연차를 확인해보세요</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/military-discharge-date/" aria-label="군인 전역일 계산기"><span class="cm-calc-emoji" aria-hidden="true">🧮</span><div class="cm-calc-name">군인 전역일 계산기</div><div class="cm-calc-desc">입영일과 군별을 선택하면 예상 전역일을 계산합니다</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/real-estate-brokerage-fee/" aria-label="부동산 중개수수료 계산기"><span class="cm-calc-emoji" aria-hidden="true">🧮</span><div class="cm-calc-name">부동산 중개수수료 계산기</div><div class="cm-calc-desc">주택 매매·교환 또는 임대차(전세·월세, 환산보증금 기준) 거래금액과 거래 유형을 입력하면 공인중개사법 시행규칙에 따른 상한요율로 중개수수료를 계산합니다.</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/자동차_취등록세_계산기/" aria-label="자동차 취등록세 계산기"><span class="cm-calc-emoji" aria-hidden="true">🧮</span><div class="cm-calc-name">자동차 취등록세 계산기</div><div class="cm-calc-desc">사용자가 차량의 종류와 가격, 친환경차 여부를 입력하면 자동차 취득세를 자동으로 계산해주는 계산기입니다.</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/bmi-calculator/" aria-label="BMI(체질량지수) 계산기"><span class="cm-calc-emoji" aria-hidden="true">🧮</span><div class="cm-calc-name">BMI(체질량지수) 계산기</div><div class="cm-calc-desc">키와 몸무게를 입력하면 체질량지수(BMI)를 계산하고 체중 상태를 확인할 수 있습니다.</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/weekly-holiday-allowance/" aria-label="주휴수당 계산기" data-category-key="labor_pay" data-category-raw="노무/급여" data-content-type="calculator" data-search-text="주휴수당 계산기 주 15시간 이상 근무했다면 꼭 확인하세요 노무/급여"><span class="cm-calc-emoji" aria-hidden="true">💰</span><div class="cm-calc-name">주휴수당 계산기</div><div class="cm-calc-desc">주 15시간 이상 근무했다면 꼭 확인하세요</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/severance-pay/" aria-label="퇴직금 계산기" data-category-key="labor_pay" data-category-raw="노무/급여" data-content-type="calculator" data-search-text="퇴직금 계산기 근속기간과 평균임금으로 퇴직금을 계산해보세요 노무/급여"><span class="cm-calc-emoji" aria-hidden="true">💼</span><div class="cm-calc-name">퇴직금 계산기</div><div class="cm-calc-desc">근속기간과 평균임금으로 퇴직금을 계산해보세요</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/annual-leave-allowance/" aria-label="연차수당 계산기" data-category-key="labor_pay" data-category-raw="노무/급여" data-content-type="calculator" data-search-text="연차수당 계산기 미사용 연차를 수당으로 환산해보세요 노무/급여"><span class="cm-calc-emoji" aria-hidden="true">📅</span><div class="cm-calc-name">연차수당 계산기</div><div class="cm-calc-desc">미사용 연차를 수당으로 환산해보세요</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/unemployment-benefit/" aria-label="실업급여 계산기" data-category-key="employment_insurance" data-category-raw="고용/보험" data-content-type="calculator" data-search-text="실업급여 계산기 고용보험 가입기간 기준 예상 수급액을 확인하세요 고용/보험"><span class="cm-calc-emoji" aria-hidden="true">📋</span><div class="cm-calc-name">실업급여 계산기</div><div class="cm-calc-desc">고용보험 가입기간 기준 예상 수급액을 확인하세요</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/four-insurances/" aria-label="4대보험 계산기" data-category-key="employment_insurance" data-category-raw="고용/보험" data-content-type="calculator" data-search-text="4대보험 계산기 국민연금·건강보험·고용보험·산재보험 공제액 확인 고용/보험"><span class="cm-calc-emoji" aria-hidden="true">🏢</span><div class="cm-calc-name">4대보험 계산기</div><div class="cm-calc-desc">국민연금·건강보험·고용보험·산재보험 공제액 확인</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/연말정산_환급액_계산기/" aria-label="연말정산 환급액 계산기" data-category-key="tax_benefit" data-category-raw="세금/정부혜택" data-content-type="calculator" data-search-text="연말정산 환급액 계산기 연간 납부 세금과 공제 항목으로 환급액을 계산해보세요 세금/정부혜택"><span class="cm-calc-emoji" aria-hidden="true">🧾</span><div class="cm-calc-name">연말정산 환급액 계산기</div><div class="cm-calc-desc">연간 납부 세금과 공제 항목으로 환급액을 계산해보세요</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/육아휴직_급여_계산기/" aria-label="육아휴직 급여 계산기" data-category-key="employment_insurance" data-category-raw="노무/급여/보험" data-content-type="calculator" data-search-text="육아휴직 급여 계산기 육아휴직 기간별 예상 급여를 확인해보세요 고용/보험"><span class="cm-calc-emoji" aria-hidden="true">👶</span><div class="cm-calc-name">육아휴직 급여 계산기</div><div class="cm-calc-desc">육아휴직 기간별 예상 급여를 확인해보세요</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/freelancer-tax-3p3/" aria-label="프리랜서 3.3% 원천징수 계산기" data-category-key="tax_benefit" data-category-raw="세금/정부혜택" data-content-type="calculator" data-search-text="프리랜서 3.3% 원천징수 계산기 프리랜서·강사·작가 수입에서 3.3% 원천징수 세액과 실수령액을 계산해보세요 세금/정부혜택"><span class="cm-calc-emoji" aria-hidden="true">🧮</span><div class="cm-calc-name">프리랜서 3.3% 원천징수 계산기</div><div class="cm-calc-desc">프리랜서·강사·작가 수입에서 3.3% 원천징수 세액과 실수령액을 계산해보세요</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/jeonse-vs-monthly/" aria-label="전세 vs 월세 비교 계산기" data-category-key="real_estate" data-category-raw="부동산/임대" data-content-type="calculator" data-search-text="전세 vs 월세 비교 계산기 전세와 월세 조건을 비교해 어떤 게 더 유리한지 확인해보세요 부동산/임대"><span class="cm-calc-emoji" aria-hidden="true">🧮</span><div class="cm-calc-name">전세 vs 월세 비교 계산기</div><div class="cm-calc-desc">전세와 월세 조건을 비교해 어떤 게 더 유리한지 확인해보세요</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/annual-leave-remaining/" aria-label="연차 잔여일 계산기" data-category-key="labor_pay" data-category-raw="노동/고용법" data-content-type="calculator" data-search-text="연차 잔여일 계산기 근속개월수와 사용한 연차일수로 남은 연차를 확인해보세요 노무/급여"><span class="cm-calc-emoji" aria-hidden="true">🧮</span><div class="cm-calc-name">연차 잔여일 계산기</div><div class="cm-calc-desc">근속개월수와 사용한 연차일수로 남은 연차를 확인해보세요</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/military-discharge-date/" aria-label="군인 전역일 계산기" data-category-key="military_service" data-category-raw="병역/공무" data-content-type="calculator" data-search-text="군인 전역일 계산기 입영일과 군별을 선택하면 예상 전역일을 계산합니다 병역/공무"><span class="cm-calc-emoji" aria-hidden="true">🧮</span><div class="cm-calc-name">군인 전역일 계산기</div><div class="cm-calc-desc">입영일과 군별을 선택하면 예상 전역일을 계산합니다</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/real-estate-brokerage-fee/" aria-label="부동산 중개수수료 계산기" data-category-key="real_estate" data-category-raw="부동산/임대" data-content-type="calculator" data-search-text="부동산 중개수수료 계산기 주택 매매·교환 또는 임대차(전세·월세, 환산보증금 기준) 거래금액과 거래 유형을 입력하면 공인중개사법 시행규칙에 따른 상한요율로 중개수수료를 계산합니다. 부동산/임대"><span class="cm-calc-emoji" aria-hidden="true">🧮</span><div class="cm-calc-name">부동산 중개수수료 계산기</div><div class="cm-calc-desc">주택 매매·교환 또는 임대차(전세·월세, 환산보증금 기준) 거래금액과 거래 유형을 입력하면 공인중개사법 시행규칙에 따른 상한요율로 중개수수료를 계산합니다.</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/자동차_취등록세_계산기/" aria-label="자동차 취등록세 계산기" data-category-key="tax_benefit" data-category-raw="세금" data-content-type="calculator" data-search-text="자동차 취등록세 계산기 사용자가 차량의 종류와 가격, 친환경차 여부를 입력하면 자동차 취득세를 자동으로 계산해주는 계산기입니다. 세금/정부혜택"><span class="cm-calc-emoji" aria-hidden="true">🧮</span><div class="cm-calc-name">자동차 취등록세 계산기</div><div class="cm-calc-desc">사용자가 차량의 종류와 가격, 친환경차 여부를 입력하면 자동차 취득세를 자동으로 계산해주는 계산기입니다.</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/bmi-calculator/" aria-label="BMI(체질량지수) 계산기" data-category-key="health" data-category-raw="건강/피트니스" data-content-type="calculator" data-search-text="BMI(체질량지수) 계산기 키와 몸무게를 입력하면 체질량지수(BMI)를 계산하고 체중 상태를 확인할 수 있습니다. 건강"><span class="cm-calc-emoji" aria-hidden="true">🧮</span><div class="cm-calc-name">BMI(체질량지수) 계산기</div><div class="cm-calc-desc">키와 몸무게를 입력하면 체질량지수(BMI)를 계산하고 체중 상태를 확인할 수 있습니다.</div></a>
       </div>
     </section>
 
@@ -75,22 +91,56 @@
     <section class="cm-section" id="guides" aria-labelledby="guides-title">
       <h2 class="cm-section-title" id="guides-title">자주 찾는 계산 가이드</h2>
       <div class="cm-calc-grid">
-<a class="cm-calc-card" href="https://calcmate.kr/blog/severance-pay/" aria-label="퇴직금 받을 수 있나요? 자격 요건과 계산 방법"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">퇴직금 받을 수 있나요? 자격 요건과 계산 방법</div><div class="cm-calc-desc">퇴직금 지급 대상, 근로시간 조건, 제외 대상, 계산 방법</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/blog/weekly-holiday-allowance/" aria-label="주휴수당 계산하는 방법과 지급 조건"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">주휴수당 계산하는 방법과 지급 조건</div><div class="cm-calc-desc">주휴수당 이용 절차, 계산 예시, 주의사항</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/blog/unemployment-benefit/" aria-label="실업급여 받을 수 있나요? 자격 조건"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">실업급여 받을 수 있나요? 자격 조건</div><div class="cm-calc-desc">실업급여 지급 대상, 핵심 조건, 제외 대상</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/blog/four-insurances/" aria-label="4대보험 계산하는 방법과 요율"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">4대보험 계산하는 방법과 요율</div><div class="cm-calc-desc">4대보험 계산 원리, 지급 조건, 계산 예시</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/blog/annual-leave-allowance/" aria-label="연차수당 계산하는 방법과 지급 기준"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">연차수당 계산하는 방법과 지급 기준</div><div class="cm-calc-desc">연차수당 이용 절차, 계산 예시, 주의사항</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/blog/severance-pay-documents/" aria-label="퇴직금 관련 서류 준비와 제출 방법"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">퇴직금 관련 서류 준비와 제출 방법</div><div class="cm-calc-desc">퇴직금 필수 서류, 발급 방법, 제출 기한</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/blog/육아휴직_급여_계산기/" aria-label="육아휴직 급여 받을 수 있나요? 자격 조건"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">육아휴직 급여 받을 수 있나요? 자격 조건</div><div class="cm-calc-desc">육아휴직 급여 지급 대상, 핵심 조건, 계산 방법</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/blog/연말정산_환급액_계산기/" aria-label="연말정산 환급액 계산하는 방법"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">연말정산 환급액 계산하는 방법</div><div class="cm-calc-desc">연말정산 계산 원리, 입력값 설명, 결과 해석</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/blog/unemployment-benefit-howto/" aria-label="실업급여 신청하는 방법과 절차"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">실업급여 신청하는 방법과 절차</div><div class="cm-calc-desc">실업급여 이용 절차, 필요한 정보, 주의사항</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/blog/four-insurances-documents/" aria-label="4대보험 관련 서류 준비와 확인 방법"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">4대보험 관련 서류 준비와 확인 방법</div><div class="cm-calc-desc">4대보험 필수 서류, 발급 방법, 제출 방법</div></a>
-<a class="cm-calc-card" href="https://calcmate.kr/blog/bmi-calculator/" aria-label="BMI 계산하는 방법과 판정 기준"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">BMI 계산하는 방법과 판정 기준</div><div class="cm-calc-desc">BMI 계산 원리, 판정 기준, 결과 해석 방법</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/blog/severance-pay/" aria-label="퇴직금 받을 수 있나요? 자격 요건과 계산 방법" data-category-key="labor_pay" data-category-raw="노무/급여" data-content-type="guide" data-search-text="퇴직금 받을 수 있나요? 자격 요건과 계산 방법 퇴직금 지급 대상, 근로시간 조건, 제외 대상, 계산 방법 노무/급여" data-calculator-slug="severance-pay"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">퇴직금 받을 수 있나요? 자격 요건과 계산 방법</div><div class="cm-calc-desc">퇴직금 지급 대상, 근로시간 조건, 제외 대상, 계산 방법</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/blog/weekly-holiday-allowance/" aria-label="주휴수당 계산하는 방법과 지급 조건" data-category-key="labor_pay" data-category-raw="노무/급여" data-content-type="guide" data-search-text="주휴수당 계산하는 방법과 지급 조건 주휴수당 이용 절차, 계산 예시, 주의사항 노무/급여" data-calculator-slug="weekly-holiday-allowance"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">주휴수당 계산하는 방법과 지급 조건</div><div class="cm-calc-desc">주휴수당 이용 절차, 계산 예시, 주의사항</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/blog/unemployment-benefit/" aria-label="실업급여 받을 수 있나요? 자격 조건" data-category-key="employment_insurance" data-category-raw="고용/보험" data-content-type="guide" data-search-text="실업급여 받을 수 있나요? 자격 조건 실업급여 지급 대상, 핵심 조건, 제외 대상 고용/보험" data-calculator-slug="unemployment-benefit"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">실업급여 받을 수 있나요? 자격 조건</div><div class="cm-calc-desc">실업급여 지급 대상, 핵심 조건, 제외 대상</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/blog/four-insurances/" aria-label="4대보험 계산하는 방법과 요율" data-category-key="employment_insurance" data-category-raw="고용/보험" data-content-type="guide" data-search-text="4대보험 계산하는 방법과 요율 4대보험 계산 원리, 지급 조건, 계산 예시 고용/보험" data-calculator-slug="four-insurances"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">4대보험 계산하는 방법과 요율</div><div class="cm-calc-desc">4대보험 계산 원리, 지급 조건, 계산 예시</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/blog/annual-leave-allowance/" aria-label="연차수당 계산하는 방법과 지급 기준" data-category-key="labor_pay" data-category-raw="노무/급여" data-content-type="guide" data-search-text="연차수당 계산하는 방법과 지급 기준 연차수당 이용 절차, 계산 예시, 주의사항 노무/급여" data-calculator-slug="annual-leave-allowance"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">연차수당 계산하는 방법과 지급 기준</div><div class="cm-calc-desc">연차수당 이용 절차, 계산 예시, 주의사항</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/blog/severance-pay-documents/" aria-label="퇴직금 관련 서류 준비와 제출 방법" data-category-key="labor_pay" data-category-raw="노무/급여" data-content-type="guide" data-search-text="퇴직금 관련 서류 준비와 제출 방법 퇴직금 필수 서류, 발급 방법, 제출 기한 노무/급여" data-calculator-slug="severance-pay"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">퇴직금 관련 서류 준비와 제출 방법</div><div class="cm-calc-desc">퇴직금 필수 서류, 발급 방법, 제출 기한</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/blog/육아휴직_급여_계산기/" aria-label="육아휴직 급여 받을 수 있나요? 자격 조건" data-category-key="employment_insurance" data-category-raw="노무/급여/보험" data-content-type="guide" data-search-text="육아휴직 급여 받을 수 있나요? 자격 조건 육아휴직 급여 지급 대상, 핵심 조건, 계산 방법 고용/보험" data-calculator-slug="육아휴직_급여_계산기"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">육아휴직 급여 받을 수 있나요? 자격 조건</div><div class="cm-calc-desc">육아휴직 급여 지급 대상, 핵심 조건, 계산 방법</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/blog/연말정산_환급액_계산기/" aria-label="연말정산 환급액 계산하는 방법" data-category-key="tax_benefit" data-category-raw="세금/정부혜택" data-content-type="guide" data-search-text="연말정산 환급액 계산하는 방법 연말정산 계산 원리, 입력값 설명, 결과 해석 세금/정부혜택" data-calculator-slug="연말정산_환급액_계산기"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">연말정산 환급액 계산하는 방법</div><div class="cm-calc-desc">연말정산 계산 원리, 입력값 설명, 결과 해석</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/blog/unemployment-benefit-howto/" aria-label="실업급여 신청하는 방법과 절차" data-category-key="employment_insurance" data-category-raw="고용/보험" data-content-type="guide" data-search-text="실업급여 신청하는 방법과 절차 실업급여 이용 절차, 필요한 정보, 주의사항 고용/보험" data-calculator-slug="unemployment-benefit"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">실업급여 신청하는 방법과 절차</div><div class="cm-calc-desc">실업급여 이용 절차, 필요한 정보, 주의사항</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/blog/four-insurances-documents/" aria-label="4대보험 관련 서류 준비와 확인 방법" data-category-key="employment_insurance" data-category-raw="고용/보험" data-content-type="guide" data-search-text="4대보험 관련 서류 준비와 확인 방법 4대보험 필수 서류, 발급 방법, 제출 방법 고용/보험" data-calculator-slug="four-insurances"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">4대보험 관련 서류 준비와 확인 방법</div><div class="cm-calc-desc">4대보험 필수 서류, 발급 방법, 제출 방법</div></a>
+<a class="cm-calc-card" href="https://calcmate.kr/blog/bmi-calculator/" aria-label="BMI 계산하는 방법과 판정 기준" data-category-key="health" data-category-raw="건강/피트니스" data-content-type="guide" data-search-text="BMI 계산하는 방법과 판정 기준 BMI 계산 원리, 판정 기준, 결과 해석 방법 건강" data-calculator-slug="bmi-calculator"><span class="cm-calc-emoji" aria-hidden="true">📖</span><div class="cm-calc-name">BMI 계산하는 방법과 판정 기준</div><div class="cm-calc-desc">BMI 계산 원리, 판정 기준, 결과 해석 방법</div></a>
       </div>
     </section>
 
     <footer class="cm-footer"><div class="cm-footer-logo">CalcMate</div><nav class="cm-footer-links" aria-label="푸터 링크"><a href="https://calcmate.kr/about/">소개</a><a href="https://calcmate.kr/privacy/">개인정보처리방침</a><a href="https://calcmate.kr/terms/">이용약관</a><a href="https://calcmate.kr/contact/">문의하기</a></nav><p class="cm-footer-copy">© 2026 CalcMate. All rights reserved.</p></footer>
   </div>
 </main>
+<script>
+(function(){
+  var searchInput = document.getElementById('cm-search-input');
+  var catButtons = document.querySelectorAll('.cm-cat-btn');
+  var emptyMsg = document.getElementById('cm-filter-empty');
+  var cards = document.querySelectorAll('.cm-calc-card[data-category-key]');
+  var activeCategory = 'all';
+
+  function normalizeText(s) { return (s || '').toLowerCase(); }
+
+  function applyFilter() {
+    var query = normalizeText(searchInput ? searchInput.value : '');
+    var visibleCount = 0;
+    cards.forEach(function(card){
+      var matchesCategory = activeCategory === 'all' || card.getAttribute('data-category-key') === activeCategory;
+      var matchesSearch = !query || normalizeText(card.getAttribute('data-search-text')).indexOf(query) !== -1;
+      var show = matchesCategory && matchesSearch;
+      card.style.display = show ? '' : 'none';
+      if (show) visibleCount++;
+    });
+    if (emptyMsg) emptyMsg.hidden = visibleCount !== 0;
+  }
+
+  if (searchInput) searchInput.addEventListener('input', applyFilter);
+  catButtons.forEach(function(btn){
+    btn.addEventListener('click', function(){
+      catButtons.forEach(function(b){ b.classList.remove('is-active'); });
+      btn.classList.add('is-active');
+      activeCategory = btn.getAttribute('data-filter-category');
+      applyFilter();
+    });
+  });
+})();
+</script>
 </body>
 </html>
