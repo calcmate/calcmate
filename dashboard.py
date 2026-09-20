@@ -948,7 +948,7 @@ elif tab == "📝 Blog Schedule":
     blog_mode = st.selectbox(
         "Blog 발행 모드", ["draft", "publish"],
         index=0 if bs.get("mode", "draft") == "draft" else 1,
-        format_func=lambda m: {"draft": "Draft (WP 초안)", "publish": "Publish (WP 즉시 발행)"}.get(m, m),
+        format_func=lambda m: {"draft": "Dry-Run (WP 미호출)", "publish": "Publish (WP 즉시 발행)"}.get(m, m),
         key="blog_mode")
     blog_weekday_only = st.checkbox("평일만 발행 (weekday_only)", value=bs.get("weekday_only", False), key="blog_wd_only")
 
