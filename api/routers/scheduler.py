@@ -118,6 +118,29 @@ def post_blog_run_once(user: CurrentUser = Depends(require_admin)):
         return fail("LOCK_CONFLICT", str(e))
 
 
+class BlogRunOnceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["draft", "publish"] = "draft"
+
+
+@router.post("/blog/run-once/oneoff")
+def post_blog_run_once_oneoff(
+    body: BlogRunOnceRequest,
+    user: CurrentUser = Depends(require_admin)
+):
+    """1회 실행 전용 endpoint. BLOG_SCHEDULE.enabled와 무관하게 실행되며,
+    사용자가 선택한 mode(draft/publish)를 전달한다."""
+    try:
+        result = blog_scheduler_service.run_once(mode=body.mode)
+        return ok(result)
+    except blog_scheduler_service.BlogSchedulerDisabled as e:
+        return fail("SCHEDULER_DISABLED", str(e))
+    except blog_scheduler_service.BlogSchedulerBusy as e:
+        return fail("LOCK_CONFLICT", str(e))
+    except ValueError as e:
+        return fail("VALIDATION_ERROR", str(e))
+
+
 # ── STEP S10: Content Sync 수동 실행 ─────────────────────────────────────
 
 

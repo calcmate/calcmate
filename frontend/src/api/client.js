@@ -139,6 +139,10 @@ export function runBlogSchedulerOnce() {
   return sendJson('/api/scheduler/blog/run-once', 'POST')
 }
 
+export function runBlogSchedulerOnceOneoff(mode = 'draft') {
+  return sendJson('/api/scheduler/blog/run-once/oneoff', 'POST', { mode })
+}
+
 // ── STEP 18-F: Calculator 조회(GET만 — 생성/삭제/배포 함수는 추가하지 않는다) ──
 
 export function getCalculators() {

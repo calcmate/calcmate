@@ -63,19 +63,30 @@ def get_oneoff_reservations() -> list:
     return reservations or []
 
 
-def run_once() -> dict:
-    """기존 lock을 사용해 Scheduler loop와의 동시 실행을 방지한 뒤,
-    main.resolve_blog_publish_fn(cfg)가 반환하는 실제 엔진 함수를 max_count=1로
-    정확히 1회 호출한다. mode에 따라 draft(격리 출력만)/publish(WordPress 발행)로
-    분기되는 것은 기존 엔진의 동작 그대로다 — 이 함수는 그 분기 로직을 재구현하지 않는다."""
-    cfg = _blog_cfg()
-    if not cfg.get("BLOG_SCHEDULE", {}).get("enabled", False):
-        raise BlogSchedulerDisabled("BLOG_SCHEDULE.enabled=false")
+def run_once(mode: str = None) -> dict:
+"""기존 lock을 사용해 Scheduler loop와의 동시 실행을 방지한 뒤,
+     실행 함수를 max_count=1로 정확히 1회 호출한다.
+
+     mode 파라미터가 주어지면 one-off 실행 경로(resolve_blog_oneoff_publish_fn)를 사용해
+     BLOG_SCHEDULE.enabled와 무관하게 실행한다. mode가 없으면 기존 recurring 경로
+     (resolve_blog_publish_fn)를 사용하며 BLOG_SCHEDULE.enabled 체크를 적용한다."""
+     cfg = _blog_cfg()
+
+     if mode is not None:
+        mode = str(mode or "draft").strip().lower()
+        if mode not in ("draft", "publish"):
+            raise ValueError(f"허용되지 않는 mode: {mode!r} (허용값: draft, publish)")
+        from main import resolve_blog_oneoff_publish_fn
+        run_once_fn = resolve_blog_oneoff_publish_fn(cfg, mode)
+    else:
+        if not cfg.get("BLOG_SCHEDULE", {}).get("enabled", False):
+            raise BlogSchedulerDisabled("BLOG_SCHEDULE.enabled=false")
+        from main import resolve_blog_publish_fn
+        run_once_fn = resolve_blog_publish_fn(cfg)
 
     if not scheduler_engine._acquire_lock(cfg):
         raise BlogSchedulerBusy("다른 Blog Scheduler 실행이 진행 중입니다(lock 보유 중)")
     try:
-        run_once_fn = resolve_blog_publish_fn(cfg)
         return run_once_fn(cfg, max_count=1, driver_id="fastapi_manual_run_once")
     finally:
         scheduler_engine._release_lock(cfg)
