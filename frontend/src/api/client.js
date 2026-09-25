@@ -143,6 +143,30 @@ export function runBlogSchedulerOnceOneoff(mode = 'draft') {
   return sendJson('/api/scheduler/blog/run-once/oneoff', 'POST', { mode })
 }
 
+// ── Publishing Policy ──────────────────────────────────────────────────────
+// Publishing Policy는 Blog Scheduler와 별도의 정책(PUBLISHING_POLICY section)을
+// 관리한다. Topic Pool 기반 자동 발행 전용 설정이다.
+
+export function getPublishingPolicy() {
+  return getJsonAuth('/api/scheduler/publishing-policy')
+}
+
+export function patchPublishingPolicy(payload) {
+  return sendJson('/api/scheduler/publishing-policy', 'PATCH', payload)
+}
+
+export function getPublishingPolicyPreview(days = 7) {
+  return getJsonAuth(`/api/scheduler/publishing-policy/preview?days=${encodeURIComponent(days)}`)
+}
+
+export function getAutoPublishing() {
+  return getJsonAuth('/api/scheduler/auto-publishing')
+}
+
+export function patchAutoPublishing(enabled) {
+  return sendJson('/api/scheduler/auto-publishing', 'PATCH', { enabled })
+}
+
 // ── STEP 18-F: Calculator 조회(GET만 — 생성/삭제/배포 함수는 추가하지 않는다) ──
 
 export function getCalculators() {

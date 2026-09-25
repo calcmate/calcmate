@@ -10,7 +10,6 @@ import {
   runBlogSchedulerOnceOneoff,
   getPublishingPolicy,
   patchPublishingPolicy,
-  getPublishingPolicyPreview,
   getCurrentUser,
 } from '../api/client.js'
 
@@ -56,7 +55,7 @@ export default function BlogSchedulerPanel() {
   const [runMessage, setRunMessage] = useState(null)
   const [runError, setRunError] = useState(null)
 
-  const load = useCallback(() => {
+const load = useCallback(() => {
     setLoading(true)
     setLoadError(false)
     setOneoffError(false)
@@ -72,11 +71,11 @@ export default function BlogSchedulerPanel() {
       setStatus(s)
       setConfig(c)
       setToday(t)
-setHistory(h)
-       setOneoff(o)
-       setIsAdmin(Boolean(u?.success && u.data?.role === 'admin'))
+      setHistory(h)
+      setOneoff(o)
+      setIsAdmin(Boolean(u?.success && u.data?.role === 'admin'))
 
-       if (c?.success && c.data) {
+      if (c?.success && c.data) {
         setRecurringMode(c.data.mode || 'draft')
       }
       if (p?.success && p.data) {
@@ -354,7 +353,7 @@ setHistory(h)
                 type="button"
                 className="btn btn-primary"
                 onClick={handleSaveSchedule}
-                disabled={saving || !isAdmin}
+                disabled={saving}
               >
                 {saving ? '저장 중...' : '스케줄 저장'}
               </button>
