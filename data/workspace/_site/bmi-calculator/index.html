@@ -21,7 +21,7 @@
       "name": "BMI는 어떻게 계산하나요?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "체질량지수(BMI)는 신체의 체중(kg)을 신장의 제곱(m²)으로 나누어 계산합니다. 공식은 `BMI = weight_kg / ((height_cm / 100) ** 2)`입니다. 예를 들어, 키가 170cm이고 몸무게가 70kg일 경우, BMI는 약 24.22입니다."
+        "text": "체질량지수(BMI)는 신체의 체중(kg)을 신장의 제곱(m²)으로 나누어 계산합니다. 공식은 BMI = 체중(kg) ÷ 키(m)의 제곱입니다. 예를 들어, 키가 170cm이고 몸무게가 70kg일 경우, BMI는 약 24.22입니다."
       }
     },
     {
@@ -180,17 +180,17 @@
   <!-- ⑧ 본문 -->
   <section class="sm-card sm-article">
     <h2>계산 원리</h2>
-<p>체질량지수(BMI)는 개인의 체중과 신장을 통해 평가하는 체중 상태 지표로, <strong>신체의 건강을 측정하는 데 유용</strong>합니다. BMI는 유럽연합과 세계보건기구(WHO) 등의 기관에서 공식적으로 사용되는 기준으로, 1832년 벨기에의 의사 아돔 모르기(Adolphe Quetelet)가 처음 제안했습니다. BMI는 다음 공식으로 계산됩니다: weight_kg / ((height_cm / 100) ** 2). 여기서 weight_kg는 체중(킬로그램)이고, height_cm는 신장(센티미터)입니다. 이렇게 계산된 BMI는 신체의 지방량과 비만도를 간접적으로 측정할 수 있습니다.</p>
+<p>체질량지수(BMI)는 개인의 체중과 신장을 통해 평가하는 체중 상태 지표로, <strong>신체의 건강을 측정하는 데 유용</strong>합니다. BMI는 유럽연합과 세계보건기구(WHO) 등의 기관에서 공식적으로 사용되는 기준으로, 1832년 벨기에의 의사 아돔 모르기(Adolphe Quetelet)가 처음 제안했습니다. BMI는 다음 공식으로 계산됩니다: 체중(kg) ÷ 키(m)의 제곱. 여기서 체중은 킬로그램(kg) 단위이고, 신장은 센티미터(cm)로 측정한 값을 미터(m)로 환산해 사용합니다. 이렇게 계산된 BMI는 신체의 지방량과 비만도를 간접적으로 측정할 수 있습니다.</p>
 
 <h2>계산 방법</h2>
 <p>BMI를 계산하는 과정은 간단합니다. 아래는 단계별 절차입니다:</p>
 <ol>
-<li>신장(height_cm)을 센티미터 단위로 측정합니다.</li>
-<li>체중(weight_kg)을 킬로그램 단위로 측정합니다.</li>
-<li>BMI 공식에 값을 대입하여 계산합니다: <strong>BMI = weight_kg / ((height_cm / 100) ** 2)</strong>.</li>
+<li>신장(cm)을 센티미터 단위로 측정합니다.</li>
+<li>체중(kg)을 킬로그램 단위로 측정합니다.</li>
+<li>BMI 공식에 값을 대입하여 계산합니다: <strong>BMI = 체중(kg) ÷ 키(m)의 제곱</strong>.</li>
 </ol>
 <p>예를 들어, 신장이 170cm이고 체중이 70kg인 경우, 계산은 다음과 같습니다:</p>
-<p>BMI = 70 / ((170 / 100) ** 2) = 24.22</p>
+<p>BMI = 70kg ÷ (1.7m × 1.7m) = 24.22</p>
 <p>따라서 이 경우 BMI는 약 24.22입니다.</p>
 
 <h2>판정 기준</h2>
@@ -212,7 +212,7 @@
 <h2>FAQ</h2>
 <dl>
 <dt>BMI는 어떻게 계산하나요?</dt>
-<dd>체질량지수(BMI)는 신체의 체중(kg)을 신장의 제곱(m²)으로 나누어 계산합니다. 공식은 <strong>BMI = weight_kg / ((height_cm / 100) ** 2)</strong>입니다. 예를 들어, 키가 170cm이고 몸무게가 70kg일 경우, BMI는 약 24.22입니다.</dd>
+<dd>체질량지수(BMI)는 신체의 체중(kg)을 신장의 제곱(m²)으로 나누어 계산합니다. 공식은 <strong>BMI = 체중(kg) ÷ 키(m)의 제곱</strong>입니다. 예를 들어, 키가 170cm이고 몸무게가 70kg일 경우, BMI는 약 24.22입니다.</dd>
 <dt>BMI의 판정 기준은 무엇인가요?</dt>
 <dd>BMI 수치에 따른 판정 기준은 다음과 같습니다: 18.5 미만은 저체중, 18.5~24.9는 정상체중, 25~29.9는 과체중, 30 이상은 비만입니다. 따라서 BMI가 26이라면 '과체중'으로 판정됩니다.</dd>
 <dt>BMI 결과 수치의 의미는 무엇인가요?</dt>
@@ -239,7 +239,7 @@
   <section class="sm-card" id="faq-card">
     <h2 class="sm-card-title">자주 묻는 질문</h2>
     <div id="sm-dynamic-faq"></div>
-    <div class="sm-faq-item"><button class="sm-faq-q" onclick="toggleFaq(this)">BMI는 어떻게 계산하나요?<span class="sm-faq-icon">+</span></button><div class="sm-faq-a">체질량지수(BMI)는 신체의 체중(kg)을 신장의 제곱(m²)으로 나누어 계산합니다. 공식은 `BMI = weight_kg / ((height_cm / 100) ** 2)`입니다. 예를 들어, 키가 170cm이고 몸무게가 70kg일 경우, BMI는 약 24.22입니다.</div></div>
+    <div class="sm-faq-item"><button class="sm-faq-q" onclick="toggleFaq(this)">BMI는 어떻게 계산하나요?<span class="sm-faq-icon">+</span></button><div class="sm-faq-a">체질량지수(BMI)는 신체의 체중(kg)을 신장의 제곱(m²)으로 나누어 계산합니다. 공식은 BMI = 체중(kg) ÷ 키(m)의 제곱입니다. 예를 들어, 키가 170cm이고 몸무게가 70kg일 경우, BMI는 약 24.22입니다.</div></div>
 <div class="sm-faq-item"><button class="sm-faq-q" onclick="toggleFaq(this)">BMI의 판정 기준은 무엇인가요?<span class="sm-faq-icon">+</span></button><div class="sm-faq-a">BMI 수치에 따른 판정 기준은 다음과 같습니다: 18.5 미만은 저체중, 18.5~24.9는 정상체중, 25~29.9는 과체중, 30 이상은 비만입니다. 따라서 BMI가 26이라면 &#x27;과체중&#x27;으로 판정됩니다.</div></div>
 <div class="sm-faq-item"><button class="sm-faq-q" onclick="toggleFaq(this)">BMI 결과 수치의 의미는 무엇인가요?<span class="sm-faq-icon">+</span></button><div class="sm-faq-a">BMI 수치는 비만도 및 건강 위험도를 가늠할 수 있는 지표입니다. 예를 들어, BMI가 30 이상이면 심혈관 질환, 당뇨병 등의 건강 문제 위험이 높아질 수 있습니다.</div></div>
 <div class="sm-faq-item"><button class="sm-faq-q" onclick="toggleFaq(this)">BMI를 측정할 때 주의할 점은 무엇인가요?<span class="sm-faq-icon">+</span></button><div class="sm-faq-a">BMI는 신체 내부 구성이나 근육량을 반영하지 않습니다. 운동선수처럼 근육량이 많은 경우 실제 체지방률과 다를 수 있으므로, 이 점을 유의해야 합니다.</div></div>
