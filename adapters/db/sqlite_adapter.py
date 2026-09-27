@@ -21,6 +21,7 @@ _ID_COL = {
     "blog_articles":     "article_id",
     "sync_runs":         "run_id",
     "sync_log_entries":  "entry_id",
+    "topic_pool":        "topic_id",
 }
 
 

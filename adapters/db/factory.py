@@ -64,6 +64,26 @@ def get_calculator_storage_adapter(cfg: dict) -> AbstractDBAdapter:
     return get_db_adapter(cfg)
 
 
+def get_topic_pool_storage_adapter(cfg: dict) -> AbstractDBAdapter:
+    """topic_pool 전용 adapter(CALCMATE-AUTO-CONTENT-TOPIC-IMPLEMENT-01).
+
+    get_calculator_storage_adapter()/get_blog_article_storage_adapter()와 완전히
+    동일한 조건부 구조를 따른다 — 전역 DB_ADAPTER가 Sheets를 실제로 쓰는 설정
+    (sheets/dual)일 때만 SQLiteFirstAdapter(SQLite=운영 원본, Sheets=백업)로
+    바꿔치고, 그 외(sqlite/postgres 단독)에서는 get_db_adapter(cfg)와 동일하게
+    동작해 기존 테스트/개발 환경을 그대로 통과시킨다.
+
+    "calculators"/"blog_articles"/"sites"/"articles" 등 다른 Repository는 절대
+    이 함수를 쓰지 않는다 — 각자 기존 경로를 그대로 사용한다. DualAdapter/
+    get_calculator_storage_adapter()/get_blog_article_storage_adapter() 자체는
+    이 함수 신설로 단 한 줄도 바뀌지 않는다."""
+    adapter_type = cfg.get("DB_ADAPTER", "sheets").lower()
+    if adapter_type in ("sheets", "dual"):
+        from .sqlite_first_adapter import SQLiteFirstAdapter
+        return SQLiteFirstAdapter(cfg)
+    return get_db_adapter(cfg)
+
+
 def get_blog_article_storage_adapter(cfg: dict) -> AbstractDBAdapter:
     """blog_articles 전용 adapter(STEP96~97: SQLite MAIN / Sheets BACKUP 전환).
 
