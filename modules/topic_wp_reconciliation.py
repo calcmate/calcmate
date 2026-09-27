@@ -22,15 +22,25 @@ WP post와의 연결은 오직 다음 경로만 사용한다(추측/fuzzy matchi
 from modules import topic_pool
 from modules.wp_readonly_client import get_wp_post_readonly, WP_PRODUCTION_URL
 
-# WP post의 실제 status가 이 값이면 Topic="published"와 일치(MATCH)한다.
+# WP REST의 공개 상태 값.
 _WP_PUBLISHED_STATUS = "publish"
 
+# CALCMATE-TOPIC-DRAFT-STATUS-FIX-C-IMPLEMENT-01: Topic="published"는 "WP post 생성
+# 성공(draft 포함)"을 뜻하므로(topic_publish_adapter), 기대 WP 상태는 Topic이 아니라
+# 그 Topic을 실행한 reservation의 요청 모드로 정한다.
+#   reservation.mode(우선) → 기대 WP status
+_MODE_TO_WP_STATUS = {"draft": "draft", "publish": _WP_PUBLISHED_STATUS}
+#   mode가 없는 legacy reservation용 fallback: result.results[0].status(요청값 에코)
+_RESULT_STATUS_TO_WP_STATUS = {"DRAFT": "draft", "PUBLISHED": _WP_PUBLISHED_STATUS}
 
-def _find_wp_post_id_for_topic(cfg: dict, topic: dict):
-    """topic["oneoff_reservation_id"]로만 wp_post_id를 찾는다. 없으면 None."""
+
+def _find_reservation_info_for_topic(cfg: dict, topic: dict) -> dict:
+    """topic["oneoff_reservation_id"]로만 reservation을 찾아
+    {"wp_post_id", "reservation_mode", "result_status"}를 반환한다(없는 값은 None)."""
+    info = {"wp_post_id": None, "reservation_mode": None, "result_status": None}
     reservation_id = str(topic.get("oneoff_reservation_id") or "").strip()
     if not reservation_id:
-        return None
+        return info
 
     import modules.scheduler as scheduler
     local_cfg = dict(cfg)
@@ -39,13 +49,27 @@ def _find_wp_post_id_for_topic(cfg: dict, topic: dict):
     for entry in scheduler.load_oneoff(local_cfg):
         if entry.get("id") != reservation_id:
             continue
+        info["reservation_mode"] = entry.get("mode") or None
         result = entry.get("result") or {}
         results_list = result.get("results") or []
         if results_list:
-            wp_post_id = results_list[0].get("wp_post_id")
-            if wp_post_id:
-                return wp_post_id
-        return None
+            info["wp_post_id"] = results_list[0].get("wp_post_id") or None
+            info["result_status"] = results_list[0].get("status") or None
+        return info
+    return info
+
+
+def _find_wp_post_id_for_topic(cfg: dict, topic: dict):
+    """topic["oneoff_reservation_id"]로만 wp_post_id를 찾는다. 없으면 None."""
+    return _find_reservation_info_for_topic(cfg, topic)["wp_post_id"]
+
+
+def _expected_wp_status(reservation_mode, result_status):
+    """reservation.mode 우선, 없으면 results[0].status fallback. 둘 다 없으면 None."""
+    if reservation_mode:
+        return _MODE_TO_WP_STATUS.get(str(reservation_mode).strip().lower())
+    if result_status:
+        return _RESULT_STATUS_TO_WP_STATUS.get(str(result_status).strip().upper())
     return None
 
 
@@ -54,32 +78,51 @@ def check_published_topic_wp_status(cfg: dict, topic_id: str) -> dict:
 
     Returns:
         {"status": <아래 중 하나>, "topic_id": str, "wp_post_id": int|None,
-         "wp_status": str|None}
+         "wp_status": str|None, "expected_wp_status": str|None,
+         "reservation_mode": str|None}
+        (expected_wp_status/reservation_mode는 additive 필드 — 기존 호출부는
+         status/wp_post_id/wp_status만 사용한다)
+
+        기대 WP status: reservation.mode("draft"→draft, "publish"→publish).
+        mode가 없는 legacy reservation은 result.results[0].status
+        ("DRAFT"→draft, "PUBLISHED"→publish)를 fallback으로 사용한다.
 
         status 값:
           - "TOPIC_NOT_FOUND": topic_id가 Topic Pool에 없음
           - "TOPIC_NOT_PUBLISHED": topic은 있으나 status != "published"
           - "WP_POST_ID_UNAVAILABLE": oneoff_reservation_id가 없거나, 그
             reservation에서 wp_post_id를 찾을 수 없음(추측하지 않음)
+          - "MODE_UNAVAILABLE": wp_post_id는 있으나 mode와 results[0].status가
+            모두 없어 기대 WP status를 정할 수 없음(WP GET 없이 종료)
           - "WP_POST_NOT_FOUND": WP가 HTTP 404를 반환(영구 삭제로 추정)
           - "WP_CHECK_ERROR": WP GET이 404 이외의 이유로 실패(네트워크 오류 등,
             추측성 판정을 피하기 위해 MATCH/MISMATCH 어느 쪽으로도 단정하지 않음)
-          - "MATCH": WP status == "publish"(Topic=published와 일치)
-          - "MISMATCH": WP status가 draft/trash/기타 publish가 아닌 값
+          - "MATCH": WP status == 기대 WP status
+          - "UNEXPECTED_PUBLISHED": draft로 요청했는데 WP가 publish(사람이 공개했을
+            수 있음 — MISMATCH와 달리 candidate 복귀 대상이 아님)
+          - "MISMATCH": 그 외(publish 요청인데 draft, trash, private/pending/future 등)
     """
+    def _result(status, wp_post_id=None, wp_status=None, expected=None, mode=None):
+        return {"status": status, "topic_id": topic_id, "wp_post_id": wp_post_id,
+                "wp_status": wp_status, "expected_wp_status": expected,
+                "reservation_mode": mode}
+
     topic = topic_pool.get_topic(cfg, topic_id)
     if topic is None:
-        return {"status": "TOPIC_NOT_FOUND", "topic_id": topic_id,
-                "wp_post_id": None, "wp_status": None}
+        return _result("TOPIC_NOT_FOUND")
 
     if topic.get("status") != "published":
-        return {"status": "TOPIC_NOT_PUBLISHED", "topic_id": topic_id,
-                "wp_post_id": None, "wp_status": None}
+        return _result("TOPIC_NOT_PUBLISHED")
 
-    wp_post_id = _find_wp_post_id_for_topic(cfg, topic)
+    info = _find_reservation_info_for_topic(cfg, topic)
+    wp_post_id = info["wp_post_id"]
+    mode = info["reservation_mode"]
     if not wp_post_id:
-        return {"status": "WP_POST_ID_UNAVAILABLE", "topic_id": topic_id,
-                "wp_post_id": None, "wp_status": None}
+        return _result("WP_POST_ID_UNAVAILABLE", mode=mode)
+
+    expected = _expected_wp_status(mode, info["result_status"])
+    if expected is None:
+        return _result("MODE_UNAVAILABLE", wp_post_id=wp_post_id, mode=mode)
 
     wp = cfg.get("wordpress", {}) or {}
     wp_url = wp.get("url") or WP_PRODUCTION_URL
@@ -90,12 +133,17 @@ def check_published_topic_wp_status(cfg: dict, topic_id: str) -> dict:
 
     if not wp_result.get("success"):
         if wp_result.get("http_status") == 404:
-            return {"status": "WP_POST_NOT_FOUND", "topic_id": topic_id,
-                    "wp_post_id": wp_post_id, "wp_status": None}
-        return {"status": "WP_CHECK_ERROR", "topic_id": topic_id,
-                "wp_post_id": wp_post_id, "wp_status": None}
+            return _result("WP_POST_NOT_FOUND", wp_post_id=wp_post_id,
+                           expected=expected, mode=mode)
+        return _result("WP_CHECK_ERROR", wp_post_id=wp_post_id,
+                       expected=expected, mode=mode)
 
     wp_status = wp_result.get("status", "")
-    verdict = "MATCH" if wp_status == _WP_PUBLISHED_STATUS else "MISMATCH"
-    return {"status": verdict, "topic_id": topic_id,
-            "wp_post_id": wp_post_id, "wp_status": wp_status}
+    if wp_status == expected:
+        verdict = "MATCH"
+    elif expected == "draft" and wp_status == _WP_PUBLISHED_STATUS:
+        verdict = "UNEXPECTED_PUBLISHED"
+    else:
+        verdict = "MISMATCH"
+    return _result(verdict, wp_post_id=wp_post_id, wp_status=wp_status,
+                   expected=expected, mode=mode)

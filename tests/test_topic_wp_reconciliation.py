@@ -26,15 +26,18 @@ def _cfg(tmp_path):
             "DB_ADAPTER": "sqlite", "scheduler_line": "blog"}
 
 
-def _make_published_topic_with_reservation(cfg, wp_post_id=597, calculator_id="calc_x"):
+def _make_published_topic_with_reservation(cfg, wp_post_id=597, calculator_id="calc_x",
+                                           mode="draft", result_status="DRAFT"):
     """candidate -> ... -> published까지 공식 API로 진행시키고, 동일 shape의
-    reservation(result.results[0].wp_post_id 포함)을 공식 API로 만든다."""
+    reservation(result.results[0].wp_post_id 포함)을 공식 API로 만든다.
+    mode/result_status: CALCMATE-TOPIC-DRAFT-STATUS-FIX-C-IMPLEMENT-01 — 예약 요청 모드와
+    그 결과 status(요청값 에코, topic_publish_adapter 규약: DRAFT/PUBLISHED)."""
     t = tp.create_topic(cfg, slug="freelancer-tax-3p3", topic="t", title="ti",
                          intent="calculator", calculator_id=calculator_id)
     t = tp.transition_status(cfg, t["topic_id"], "approved", actor="t", reason="r")
 
     reservation = sch.add_oneoff_reservation(
-        cfg, datetime(2026, 9, 23, 10, 26, tzinfo=timezone.utc), "draft",
+        cfg, datetime(2026, 9, 23, 10, 26, tzinfo=timezone.utc), mode,
         topic_id=t["topic_id"])
     tp.update_topic(cfg, t["topic_id"], oneoff_reservation_id=reservation["id"])
     t = tp.transition_status(cfg, t["topic_id"], "scheduled", actor="t", reason="r")
@@ -42,7 +45,7 @@ def _make_published_topic_with_reservation(cfg, wp_post_id=597, calculator_id="c
 
     sch.mark_oneoff_result(cfg, reservation["id"], "completed", result={
         "produced": 1, "reason": "",
-        "results": [{"topic_id": t["topic_id"], "status": "DRAFT",
+        "results": [{"topic_id": t["topic_id"], "status": result_status,
                       "wp_post_id": wp_post_id, "wp_permalink": "https://x/?p=597"}],
     })
     t = tp.transition_status(cfg, t["topic_id"], "published", actor="t", reason="r")
@@ -60,11 +63,11 @@ def _fake_wp_get(status, http_status=200, success=True):
     return _fn
 
 
-# ── Test 3: published + WP publish = MATCH ───────────────────────────
+# ── Test 3: published(publish 예약) + WP publish = MATCH ─────────────
 
 def test_3_published_plus_wp_publish_is_match(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path)
-    t = _make_published_topic_with_reservation(cfg)
+    t = _make_published_topic_with_reservation(cfg, mode="publish", result_status="PUBLISHED")
     monkeypatch.setattr(rc, "get_wp_post_readonly", _fake_wp_get("publish"))
 
     result = rc.check_published_topic_wp_status(cfg, t["topic_id"])
@@ -85,11 +88,11 @@ def test_4_published_plus_wp_trash_is_mismatch(tmp_path, monkeypatch):
     assert result["wp_status"] == "trash"
 
 
-# ── Test 5: published + WP draft = MISMATCH ───────────────────────────
+# ── Test 5: published(publish 예약) + WP draft = MISMATCH ─────────────
 
 def test_5_published_plus_wp_draft_is_mismatch(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path)
-    t = _make_published_topic_with_reservation(cfg)
+    t = _make_published_topic_with_reservation(cfg, mode="publish", result_status="PUBLISHED")
     monkeypatch.setattr(rc, "get_wp_post_readonly", _fake_wp_get("draft"))
 
     result = rc.check_published_topic_wp_status(cfg, t["topic_id"])
@@ -248,3 +251,133 @@ def test_golden10_unchanged_after_reconciliation_use(tmp_path, monkeypatch):
     after = hashlib.sha256(repr(GOLDEN_10_AFTER).encode()).hexdigest()
     assert before == after
     assert GOLDEN_10 is GOLDEN_10_AFTER
+
+
+# ── CALCMATE-TOPIC-DRAFT-STATUS-FIX-C-IMPLEMENT-01: reservation.mode 기준 판정 ──
+# 기대 WP status = reservation.mode(없으면 results[0].status fallback).
+# 실제 WP 호출 없음(get_wp_post_readonly monkeypatch), 전부 tmp_path 격리.
+
+def _check(cfg, monkeypatch, topic_id, wp_status=None, http_status=200, success=True):
+    monkeypatch.setattr(rc, "get_wp_post_readonly",
+                        _fake_wp_get(wp_status, http_status=http_status, success=success))
+    return rc.check_published_topic_wp_status(cfg, topic_id)
+
+
+def _rewrite_reservation(cfg, topic, **changes):
+    """tmp_path 예약 파일의 해당 entry를 legacy shape로 바꾼다(키 값 None → 키 삭제)."""
+    entries = sch.load_oneoff(cfg)
+    for e in entries:
+        if e["id"] == topic["oneoff_reservation_id"]:
+            for k, v in changes.items():
+                if v is None:
+                    e.pop(k, None)
+                else:
+                    e[k] = v
+    sch.save_oneoff(cfg, entries)
+
+
+@pytest.mark.parametrize("mode,result_status,wp_status,expected_verdict", [
+    ("draft", "DRAFT", "draft", "MATCH"),                       # 1
+    ("publish", "PUBLISHED", "publish", "MATCH"),               # 2
+    ("publish", "PUBLISHED", "draft", "MISMATCH"),              # 3
+    ("draft", "DRAFT", "publish", "UNEXPECTED_PUBLISHED"),      # 4
+    ("draft", "DRAFT", "trash", "MISMATCH"),                    # 5
+    ("publish", "PUBLISHED", "trash", "MISMATCH"),              # 6
+    ("draft", "DRAFT", "private", "MISMATCH"),                  # 14
+    ("draft", "DRAFT", "pending", "MISMATCH"),                  # 15
+    ("publish", "PUBLISHED", "future", "MISMATCH"),             # 16
+])
+def test_c_policy_mode_vs_wp_status(tmp_path, monkeypatch, mode, result_status,
+                                    wp_status, expected_verdict):
+    cfg = _cfg(tmp_path)
+    t = _make_published_topic_with_reservation(cfg, mode=mode, result_status=result_status)
+    result = _check(cfg, monkeypatch, t["topic_id"], wp_status)
+    assert result["status"] == expected_verdict
+    assert result["wp_status"] == wp_status
+    assert result["reservation_mode"] == mode
+    assert result["expected_wp_status"] == mode
+    assert result["wp_post_id"] == 597
+
+
+def test_c7_wp_404_is_not_found(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    t = _make_published_topic_with_reservation(cfg, mode="publish", result_status="PUBLISHED")
+    result = _check(cfg, monkeypatch, t["topic_id"], None, http_status=404, success=False)
+    assert result["status"] == "WP_POST_NOT_FOUND"
+
+
+def test_c8_missing_result_is_wp_post_id_unavailable(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    t = _make_published_topic_with_reservation(cfg)
+    _rewrite_reservation(cfg, t, result=None)
+    monkeypatch.setattr(rc, "get_wp_post_readonly",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("WP GET 금지")))
+    result = rc.check_published_topic_wp_status(cfg, t["topic_id"])
+    assert result["status"] == "WP_POST_ID_UNAVAILABLE"
+
+
+def test_c9_missing_results_is_wp_post_id_unavailable(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    t = _make_published_topic_with_reservation(cfg)
+    _rewrite_reservation(cfg, t, result={"produced": 1, "reason": ""})
+    monkeypatch.setattr(rc, "get_wp_post_readonly",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("WP GET 금지")))
+    assert rc.check_published_topic_wp_status(cfg, t["topic_id"])["status"] == "WP_POST_ID_UNAVAILABLE"
+
+
+def test_c10_missing_wp_post_id_is_unavailable(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    t = _make_published_topic_with_reservation(cfg)
+    _rewrite_reservation(cfg, t, result={"produced": 1, "results": [{"status": "DRAFT"}]})
+    monkeypatch.setattr(rc, "get_wp_post_readonly",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("WP GET 금지")))
+    assert rc.check_published_topic_wp_status(cfg, t["topic_id"])["status"] == "WP_POST_ID_UNAVAILABLE"
+
+
+@pytest.mark.parametrize("result_status,wp_status,expected_wp", [
+    ("DRAFT", "draft", "draft"),            # 11
+    ("PUBLISHED", "publish", "publish"),    # 12
+])
+def test_c11_12_mode_missing_falls_back_to_result_status(tmp_path, monkeypatch,
+                                                          result_status, wp_status, expected_wp):
+    cfg = _cfg(tmp_path)
+    t = _make_published_topic_with_reservation(cfg, result_status=result_status)
+    _rewrite_reservation(cfg, t, mode=None)   # legacy: mode 키 없음
+    result = _check(cfg, monkeypatch, t["topic_id"], wp_status)
+    assert result["status"] == "MATCH"
+    assert result["reservation_mode"] is None
+    assert result["expected_wp_status"] == expected_wp
+
+
+def test_c13_mode_and_result_status_missing_is_mode_unavailable(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    t = _make_published_topic_with_reservation(cfg)
+    _rewrite_reservation(cfg, t, mode=None,
+                         result={"produced": 1, "results": [{"wp_post_id": 597}]})
+    monkeypatch.setattr(rc, "get_wp_post_readonly",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("WP GET 금지")))
+    result = rc.check_published_topic_wp_status(cfg, t["topic_id"])
+    assert result["status"] == "MODE_UNAVAILABLE"
+    assert result["wp_post_id"] == 597
+    assert result["wp_status"] is None and result["expected_wp_status"] is None
+
+
+def test_c_new_verdicts_never_change_topic_state(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    t = _make_published_topic_with_reservation(cfg)
+    before = tp.get_topic(cfg, t["topic_id"])
+    assert _check(cfg, monkeypatch, t["topic_id"], "publish")["status"] == "UNEXPECTED_PUBLISHED"
+    _rewrite_reservation(cfg, t, mode=None, result={"produced": 1, "results": [{"wp_post_id": 597}]})
+    assert rc.check_published_topic_wp_status(cfg, t["topic_id"])["status"] == "MODE_UNAVAILABLE"
+    after = tp.get_topic(cfg, t["topic_id"])
+    assert after["status"] == before["status"] == "published"
+    assert after["status_history"] == before["status_history"]
+    assert after["updated_at"] == before["updated_at"]
+
+
+def test_c_existing_return_keys_preserved(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    t = _make_published_topic_with_reservation(cfg)
+    result = _check(cfg, monkeypatch, t["topic_id"], "draft")
+    assert {"status", "topic_id", "wp_post_id", "wp_status"} <= set(result)
+    assert rc.check_published_topic_wp_status(cfg, "nope")["status"] == "TOPIC_NOT_FOUND"
