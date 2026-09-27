@@ -1,8 +1,11 @@
-"""api/main.py — FastAPI 엔트리포인트 (최소 구조).
+"""api/main.py — FastAPI 엔트리포인트 (Worker Owner).
 
-이번 Feature(Blog Scheduler / Publishing Policy / Settings)에 필요한
-router만 등록한다. unrelated router(health, dashboard, calculators, logs,
-costs, publish, auth, blog, strategy_room, workboard, sites)는 제외한다.
+React Dashboard
+  ↓
+FastAPI
+  ├─ API
+  ├─ Blog Scheduler Worker
+  └─ One-off Scheduler Worker
 """
 from contextlib import asynccontextmanager
 
@@ -16,10 +19,24 @@ from api.services.worker_manager import get_worker_manager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # WorkerManager singleton을 여기서 1회만 생성한다(§7). 이 생성은 워커를 기동하지
-    # 않는다 — WorkerManager는 상태를 "조회"만 하는 stateless 컴포넌트이기 때문이다.
-    get_worker_manager()
-    yield
+    # 1. WorkerManager 초기화
+    wm = get_worker_manager()
+
+    # 2. Blog Scheduler worker 시작 (BLOG_SCHEDULE.enabled인 경우)
+    from api.services.worker_manager import _worker_enabled
+    if _worker_enabled("blog"):
+        get_worker_manager().start_worker("blog")
+
+    # 3. One-off Scheduler worker 시작 (BLOG_SCHEDULE.enabled OR AUTO_PUBLISHING.enabled)
+    from api.services.worker_manager import _worker_enabled as _oneoff_enabled
+    if _oneoff_enabled("oneoff"):
+        get_worker_manager().start_worker("oneoff")
+
+    try:
+        yield
+    finally:
+        # Shutdown: 모든 worker 정지
+        get_worker_manager().stop_all_workers()
 
 
 app = FastAPI(

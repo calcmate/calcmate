@@ -1,101 +1,292 @@
-"""api/services/worker_manager.py — Scheduler Worker 실제 상태 조회 (STEP 18-I-A).
+"""api/services/worker_manager.py — Scheduler Worker 관리 (STEP 18-I-A 확장).
 
-STEP 18-C의 placeholder(모두 하드코딩 False)를 걷어내고, 기존 Scheduler 엔진의 실제 상태를
-그대로 조회하도록 연결한다. FastAPI는 Scheduler 로직을 재구현하지 않는다:
+FastAPI 프로세스 내 worker lifecycle을 관리한다:
+- Blog Scheduler (recurring publish_slots)
+- Blog One-off Scheduler (one-off reservations)
 
-- enabled: config/config.yaml의 실제 값을 api.services.config_service.ConfigService로 읽는다
-  (STEP 18-C/18-E에서 이미 검증된 읽기 경로 재사용).
-- running / thread_alive: dashboard.py가 실제 워커 스레드를 식별하는 것과 동일한 방식
-  (dashboard.py:938 `_blog_alive = any(t.name == "blog-scheduler-loop" and t.is_alive() ...)`)을
-  그대로 재사용한다 — threading.enumerate()로 실제 OS 스레드를 조회할 뿐, 새 스레드를
-  만들거나 흉내내지 않는다.
-
-FastAPI 프로세스는 lifespan에서 어떤 워커도 기동하지 않으므로(STEP 18-C 원칙 유지),
-Streamlit(dashboard.py) 등 별도 프로세스가 띄운 스레드는 이 프로세스의 threading.enumerate()에
-보이지 않는다 — 그 경우 running/thread_alive=False가 "모르는 상태"가 아니라 "이 프로세스
-관점에서 실제로 그런 상태"이며, 정확한 값이다(mock이 아니다).
+기존 scheduler core 로직(modules/scheduler.py)은 재작성하지 않고 그대로 재사용한다.
 """
+import os
 import threading
+import time
+from typing import Callable, Optional
 
 from api.services.config_service import ConfigService, ConfigSectionNotAllowed
 
-_WORKER_NAMES = ("blog", "calculator", "content_sync")
+# Worker names managed by FastAPI
+_WORKER_NAMES = ("blog", "oneoff")
 
-# dashboard.py가 실제로 기동하는 스레드 이름(재정의하지 않고 문자열만 재사용).
-# 근거: dashboard.py:94(blog-scheduler-loop), :133(calc-webapp-scheduler-loop), :168(content-sync-loop)
+# Thread names (must match dashboard.py for status consistency)
 _THREAD_NAMES = {
     "blog": "blog-scheduler-loop",
-    "calculator": "calc-webapp-scheduler-loop",
-    "content_sync": "content-sync-loop",
+    "oneoff": "blog-oneoff-scheduler-loop",
 }
 
-# WorkerManager 이름 → config.yaml 섹션. "calculator"는 CALC_WEBAPP_SCHEDULE에 대응한다
-# (PUBLISH_SCHEDULE은 dashboard.py가 자동 기동하는 스레드가 없는 별개 라인이라 제외).
+# Worker name -> config section mapping
 _CONFIG_SECTIONS = {
     "blog": "BLOG_SCHEDULE",
-    "calculator": "CALC_WEBAPP_SCHEDULE",
-    "content_sync": "CONTENT_SYNC",
+    "oneoff": "BLOG_SCHEDULE",  # One-off uses BLOG_SCHEDULE for Golden10 gating
 }
 
-# dashboard.py의 enabled 기본값과 동일하게 맞춘다: CONTENT_SYNC만 기본 True(dashboard.py:173),
-# 나머지는 기본 False(dashboard.py:99, :137).
-_ENABLED_DEFAULT = {"blog": False, "calculator": False, "content_sync": True}
+# AUTO_PUBLISHING section for oneoff gating
+_AUTO_PUBLISHING_SECTION = "AUTO_PUBLISHING"
+
+# Enabled defaults matching dashboard.py
+_ENABLED_DEFAULT = {"blog": False, "oneoff": False}
+
+# Internal thread registry
+_worker_threads: dict[str, threading.Thread] = {}
+_worker_stop_events: dict[str, threading.Event] = {}
+_worker_lock = threading.RLock()
 
 
 def _thread_alive(name: str) -> bool:
-    thread_name = _THREAD_NAMES[name]
-    return any(t.name == thread_name and t.is_alive() for t in threading.enumerate())
+    """Check if worker thread is alive by name."""
+    with _worker_lock:
+        thread = _worker_threads.get(name)
+    if thread is None:
+        return False
+    return thread.is_alive()
 
 
 def _config_enabled(name: str) -> bool:
-    section = _CONFIG_SECTIONS[name]
+    """Check if worker is enabled in config.yaml."""
+    section = _CONFIG_SECTIONS.get(name)
+    if not section:
+        return _ENABLED_DEFAULT.get(name, False)
     try:
         data = ConfigService().get_section(section)
     except ConfigSectionNotAllowed:
-        return _ENABLED_DEFAULT[name]
-    return bool(data.get("enabled", _ENABLED_DEFAULT[name]))
+        return _ENABLED_DEFAULT.get(name, False)
+    return bool(data.get("enabled", _ENABLED_DEFAULT.get(name, False)))
+
+
+def _auto_publishing_enabled() -> bool:
+    """Check if AUTO_PUBLISHING is enabled (for oneoff worker)."""
+    try:
+        data = ConfigService().get_section("AUTO_PUBLISHING")
+    except ConfigSectionNotAllowed:
+        return False
+    return bool(data.get("enabled", False))
+
+
+_WP_TARGET_ENV = "CALCMATE_WP_TARGET"
+
+
+def _build_worker_cfg() -> dict:
+    """Worker 전용 runtime cfg(CALCMATE-WP-ENDPOINT-FIX-IMPLEMENT-01).
+
+    이전에는 ConfigService().get_section("BLOG_SCHEDULE")(BLOG_SCHEDULE 안쪽 dict,
+    secrets 미병합)만 넘겨 WORDPRESS_*/MODEL_* 등이 전부 빠졌다(no_wp_url).
+    이제 standalone launcher(scripts/run_blog_oneoff_scheduler_loop.build_blog_cfg)와
+    동일하게 load_config() 전체 cfg에 scheduler_line/_root만 덧붙인다.
+
+    CALCMATE_WP_TARGET 환경변수는 오직 여기서만 읽는다(미설정 = "local"). 같은
+    uvicorn 프로세스의 API route들은 인자 없는 load_config()를 쓰므로 이 값의
+    영향을 받지 않는다. 허용값 검증은 load_config()의 _apply_wp_target()이
+    ConfigError로 수행한다(fallback 없음)."""
+    import logging
+    from urllib.parse import urlparse
+    from modules.config_loader import load_config
+
+    target = (os.environ.get(_WP_TARGET_ENV) or "local").strip().lower()
+    cfg = load_config(wp_target=target)
+    cfg["scheduler_line"] = "blog"
+    cfg["_root"] = os.getcwd()
+    logging.getLogger("worker").info(
+        "Worker cfg: wp_target=%s wp_host=%s", target,
+        urlparse(cfg.get("WORDPRESS_URL") or "").hostname)
+    return cfg
+
+
+def _worker_enabled(name: str) -> bool:
+    """Check if worker should be started based on config."""
+    if name == "blog":
+        return _config_enabled("blog")
+    if name == "oneoff":
+        return _config_enabled("oneoff") or _auto_publishing_enabled()
+    return False
 
 
 class WorkerManager:
-    """blog / calculator / content_sync 실제 상태 조회 전용(STEP 18-I-A).
+    """Blog Scheduler & One-off Scheduler lifecycle manager.
 
-    이 클래스는 워커를 소유하거나 기동하지 않는다 — 매 호출마다 실제 config와 실제
-    threading.enumerate() 상태를 조회만 하는 stateless 컴포넌트다. 따라서 "중복 워커"가
-    생길 여지 자체가 없다(§7). start_worker()/stop_worker()는 여전히 미구현이며, 실제
-    워커 기동/정지 연결은 운영전환 단계에서 별도로 설계/승인한다.
+    Manages worker threads for:
+    - blog: recurring publish_slots scheduler (run_scheduler_loop)
+    - oneoff: one-off reservation scheduler (run_oneoff_scheduler_loop)
+
+    Reuses existing scheduler core logic from modules.scheduler.
     """
 
+    def __init__(self):
+        self._threads: dict[str, threading.Thread] = {}
+        self._stop_events: dict[str, threading.Event] = {}
+
     def get_status(self, name: str = None):
+        """Get worker status (enabled, running, thread_alive)."""
         if name is not None:
             if name not in _WORKER_NAMES:
                 raise KeyError(f"unknown worker: {name}")
             return self._status_of(name)
         return {n: self._status_of(n) for n in _WORKER_NAMES}
 
-    @staticmethod
-    def _status_of(name: str) -> dict:
-        # running과 thread_alive는 이 워커 계열에서 서로 다른 실측 신호가 없다 — 기존
-        # run_scheduler_loop()/run_sync_loop()는 "처리 중"과 "폴링 대기 중"을 구분해 노출하지
-        # 않으므로, 두 필드 모두 동일한 실측값(named thread의 is_alive())을 그대로 반영한다.
+    def _status_of(self, name: str) -> dict:
         alive = _thread_alive(name)
         return {
             "name": name,
-            "enabled": _config_enabled(name),
+            "enabled": _worker_enabled(name),
             "running": alive,
             "thread_alive": alive,
         }
 
-    def start_worker(self, name: str):
-        """실제 worker loop 기동 지점(placeholder). 운영전환 단계에서 별도 검증 후 구현한다."""
-        raise NotImplementedError(
-            "worker 실행은 이번 STEP 범위 밖입니다 — 운영전환 단계에서 별도 설계/승인 후 구현합니다."
-        )
+    def start_worker(self, name: str) -> bool:
+        """Start a worker thread if enabled and not already running.
 
-    def stop_worker(self, name: str):
-        """실제 worker loop 정지 지점(placeholder). 운영전환 단계에서 별도 검증 후 구현한다."""
-        raise NotImplementedError(
-            "worker 정지는 이번 STEP 범위 밖입니다 — 운영전환 단계에서 별도 설계/승인 후 구현합니다."
-        )
+        Returns:
+            True if worker started, False if already running or disabled.
+        """
+        if name not in _WORKER_NAMES:
+            raise KeyError(f"unknown worker: {name}")
+
+        with _worker_lock:
+            # Already running?
+            if _thread_alive(name):
+                return False
+
+            # Check if enabled
+            if not _worker_enabled(name):
+                return False
+
+            # Create stop event
+            stop_event = threading.Event()
+            _worker_stop_events[name] = stop_event
+
+            # Create and start thread
+            if name == "blog":
+                thread = threading.Thread(
+                    target=self._run_blog_scheduler,
+                    args=(stop_event,),
+                    name="blog-scheduler-loop",
+                    daemon=True,
+                )
+            elif name == "oneoff":
+                thread = threading.Thread(
+                    target=self._run_oneoff_scheduler,
+                    args=(stop_event,),
+                    name="blog-oneoff-scheduler-loop",
+                    daemon=True,
+                )
+            else:
+                raise KeyError(f"unknown worker: {name}")
+
+            _worker_threads[name] = thread
+            thread.start()
+            return True
+
+    def stop_worker(self, name: str) -> bool:
+        """Stop a worker thread gracefully.
+
+        Returns:
+            True if worker was running and stop signal sent, False if not running.
+        """
+        if name not in _WORKER_NAMES:
+            raise KeyError(f"unknown worker: {name}")
+
+        with _worker_lock:
+            stop_event = _worker_stop_events.get(name)
+            thread = _worker_threads.get(name)
+
+            if thread is None or not thread.is_alive():
+                return False
+
+            # Signal stop
+            stop_event.set()
+
+            # Wait for thread to finish (with timeout)
+            thread.join(timeout=10.0)
+
+            # Clean up
+            _worker_stop_events.pop(name, None)
+            _worker_threads.pop(name, None)
+            return True
+
+    def stop_all_workers(self):
+        """Stop all running workers."""
+        for name in list(_worker_threads.keys()):
+            self.stop_worker(name)
+
+    # Worker loop implementations (reusing existing scheduler core)
+
+    def _run_blog_scheduler(self, stop_event: threading.Event):
+        """Run Blog Scheduler loop (recurring publish_slots)."""
+        try:
+            from modules.scheduler import run_scheduler_loop
+            import main as _PIPE
+            from functools import partial
+
+            # Blog-specific config (전체 runtime cfg + scheduler_line/_root)
+            blog_cfg = _build_worker_cfg()
+
+            def _loop():
+                run_fn = _PIPE.resolve_blog_publish_fn(blog_cfg)
+                from modules.scheduler import run_scheduler_loop
+                run_scheduler_loop(blog_cfg, partial(run_fn, driver_id="fastapi_scheduler_loop"))
+
+            # Run with stop event check
+            while not stop_event.is_set():
+                try:
+                    # Check if still enabled
+                    if not _worker_enabled("blog"):
+                        break
+                    # Run one iteration of scheduler loop (this is a blocking call)
+                    _loop()
+                except Exception as e:
+                    import logging
+                    logging.getLogger("worker").error("Blog scheduler error: %s", e, exc_info=True)
+                    # Continue on error (matching dashboard.py behavior)
+
+                # Sleep with stop event check (poll_seconds = 30)
+                stop_event.wait(timeout=30.0)
+
+        except Exception as e:
+            import logging
+            logging.getLogger("worker").error("Blog scheduler thread fatal error: %s", e, exc_info=True)
+
+    def _run_oneoff_scheduler(self, stop_event: threading.Event):
+        """Run One-off Scheduler loop (one-off reservations)."""
+        try:
+            from modules.scheduler import run_oneoff_scheduler_loop
+            import main as _PIPE
+            from functools import partial
+
+            # Blog-specific config (전체 runtime cfg + scheduler_line/_root)
+            blog_cfg = _build_worker_cfg()
+
+            def _resolve(mode, topic_id=None):
+                run_fn = __import__("main").resolve_blog_oneoff_publish_fn(blog_cfg, mode, topic_id=topic_id)
+                from functools import partial
+                return partial(run_fn, driver_id="fastapi_oneoff_scheduler_loop")
+
+            # Run with stop event check
+            while not stop_event.is_set():
+                try:
+                    # Check if still enabled (oneoff uses OR condition)
+                    if not _worker_enabled("oneoff"):
+                        break
+                    # Run one iteration of one-off scheduler loop
+                    from modules.scheduler import run_oneoff_scheduler_loop
+                    run_oneoff_scheduler_loop(blog_cfg, lambda mode, topic_id=None: _resolve(mode, topic_id))
+                except Exception as e:
+                    import logging
+                    logging.getLogger("worker").error("One-off scheduler error: %s", e, exc_info=True)
+                    # Continue on error (matching dashboard.py behavior)
+
+                # Sleep with stop event check
+                stop_event.wait(timeout=30.0)
+
+        except Exception as e:
+            import logging
+            logging.getLogger("worker").error("One-off scheduler thread fatal error: %s", e, exc_info=True)
 
 
 _manager: WorkerManager | None = None
