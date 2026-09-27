@@ -71,6 +71,39 @@ def resolve_blog_publish_fn(cfg: dict):
         return run_blog_once_wp
     return run_blog_once
 
+
+def resolve_blog_oneoff_publish_fn(cfg: dict, mode: str, topic_id: str = None):
+    """1회성(one-off) WP 예약 전용 실행 함수 반환(CALCMATE-ONEOFF-SCHEDULE-STRUCTURE-02).
+
+    resolve_blog_publish_fn()(recurring publish_slots, "draft"=WP 미호출)과는
+    완전히 별도의 경로다 — 이 함수는 draft/publish 둘 다 반드시 실제
+    run_blog_once_wp()를 통해 WordPress에 게시하며 status만 다르게 전달한다.
+      - draft   → run_blog_once_wp(..., status="draft")  (WP 비공개 초안)
+      - publish → run_blog_once_wp(..., status="publish") (WP 공개 발행)
+
+    publisher.py의 기존 status 처리(draft/publish 둘 다 지원)를 그대로
+    재사용하며, 새로운 WP 발행 경로는 만들지 않는다. resolve_blog_publish_fn()
+    자체는 이 함수 추가로 단 한 줄도 바뀌지 않는다.
+
+    topic_id(CALCMATE-AUTO-CONTENT-TOPIC-GAP3-IMPLEMENT-01, additive):
+    None이면(기본값) 위 설명대로 기존 Golden10 경로(run_blog_once_wp)를 그대로
+    반환한다 — 이 분기는 재작성 없이 완전히 보존된다. topic_id가 주어지면
+    명시적으로 Topic 전용 실행 함수(modules/topic_publish_adapter.run_topic_once_wp)
+    로만 분기한다 — 잘못된/존재하지 않는 topic_id라도 Golden10으로 새어나가는
+    fallback 경로는 존재하지 않는다(GAP3-READONLY-DESIGN-AUDIT-01 STEP7/9 결론.
+    존재 검증 자체는 run_topic_once_wp 내부에서 fail-closed로 수행)."""
+    from functools import partial
+    mode = str(mode or "draft").strip().lower()
+    if mode not in ("draft", "publish"):
+        raise ValueError(f"허용되지 않는 mode: {mode!r} (허용값: draft, publish)")
+
+    if topic_id is None:
+        from modules.blog_scheduler_adapter import run_blog_once_wp
+        return partial(run_blog_once_wp, status=mode)
+
+    from modules.topic_publish_adapter import run_topic_once_wp
+    return partial(run_topic_once_wp, topic_id=topic_id, status=mode)
+
 # ─────────────────────────────────────────────────────────────
 def run_once(cfg: dict, dry_run: bool = False, max_count: int = None) -> dict:
     """수집 후 DAILY_POST_COUNT(또는 max_count)만큼 글을 '생산'한다.

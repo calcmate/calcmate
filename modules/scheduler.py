@@ -21,14 +21,20 @@ config.yaml 의 PUBLISH_SCHEDULE 로 슬롯을 설정한다(대시보드에서 �
 슬롯 미설정 시 DAILY_POST_COUNT 만큼 09~21시 사이로 균등 자동 생성.
 """
 import json
+import os
 import random
+import tempfile
 import time
-from datetime import datetime, date, timedelta
+import uuid
+from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .logger import get_logger
 
 LOG = get_logger()
+
+KST = ZoneInfo("Asia/Seoul")
 
 FAILURE_MODES = ("none", "retry_in_slot", "next_slot")
 STATUSES = ("pending", "running", "completed", "failed", "retry")
@@ -588,3 +594,414 @@ def _acquire_lock(cfg: dict, stale_seconds: int = 1800) -> bool:
 
 def _release_lock(cfg: dict):
     _lock_path(cfg).unlink(missing_ok=True)
+
+
+# ══════════════════════════════════════════════════════════════════
+# ── 1회성(one-off) 예약 실행 구조(CALCMATE-ONEOFF-SCHEDULE-STRUCTURE-02) ──
+#
+# 위 recurring publish_slots(매일 반복 시간대) 구조와는 완전히 분리된 별도
+# 경로다 — 기존 today_schedule.json / _schedule_path / _lock_path / get_due_posts
+# / execute_due_post / run_scheduler_loop는 이 섹션에서 단 한 줄도 참조·수정하지
+# 않는다. 저장 파일도 별도(oneoff_schedule.json), lock 파일도 별도
+# (oneoff_scheduler.lock)를 사용해 자원을 공유하지 않는다.
+#
+# 하나의 예약(reservation) = {id, scheduled_at(ISO, tz-aware), mode(draft|publish),
+# status(pending|completed|failed), created_at, executed_at, result}.
+# 요일별/개수별/반복 설정은 이 구조에 존재하지 않는다(의도적으로 미구현).
+# ══════════════════════════════════════════════════════════════════
+
+ONEOFF_MODES = ("draft", "publish")
+ONEOFF_STATUSES = ("pending", "completed", "failed")
+
+
+def _oneoff_path(cfg: dict) -> Path:
+    return _schedule_dir(cfg) / "oneoff_schedule.json"
+
+
+def load_oneoff(cfg: dict) -> list:
+    """1회성 예약 전체 목록을 로드한다. 파일이 없거나 손상됐으면 빈 리스트를
+    반환해 호출부가 죽지 않도록 한다(기존 load_schedule()과 동일한 방어 패턴)."""
+    p = _oneoff_path(cfg)
+    if not p.exists():
+        return []
+    try:
+        with open(p, encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("reservations", []) if isinstance(data, dict) else []
+    except Exception as e:
+        LOG.warning("oneoff_schedule.json 로드 실패: %s", e)
+        return []
+
+
+def save_oneoff(cfg: dict, reservations: list):
+    """oneoff_schedule.json을 원자적으로 쓴다(CALCMATE-ONEOFF-SCHEDULE-SAFETY-FIX-01).
+
+    같은 디렉터리에 임시 파일을 쓰고 flush+fsync한 뒤 os.replace()로 교체한다.
+    os.replace()는 POSIX/Windows 모두에서 원자적이므로, 쓰기 도중 프로세스가
+    비정상 종료돼도 기존 oneoff_schedule.json은 손상되지 않고 그대로 남는다
+    (부분쓰기로 잘린 파일이 남는 경우가 없음).
+
+    기존 recurring save_schedule()의 저장 방식은 이번 STEP에서 변경하지
+    않는다 — oneoff 저장 함수만 개선한다."""
+    path = _oneoff_path(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=".oneoff_schedule_", suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            json.dump({"reservations": reservations}, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def _abs_time_key(dt: datetime) -> str:
+    """timezone-aware datetime을 절대시각 비교용 키로 정규화한다(UTC ISO).
+    naive datetime은 KST로 간주해 부착한 뒤 변환한다(기존 get_due_oneoff()와
+    동일한 관례)."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=KST)
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+def add_oneoff_reservation(cfg: dict, scheduled_at: datetime, mode: str,
+                            lock_retries: int = 5, lock_retry_interval: float = 0.5,
+                            topic_id: str | None = None) -> dict:
+    """1회성 WP 예약 1건을 추가하고 저장된(또는 기존) entry를 반환한다
+    (CALCMATE-ONEOFF-SCHEDULE-SAFETY-FIX-01).
+
+    scheduled_at은 반드시 timezone-aware datetime이어야 한다(naive 금지).
+    mode는 "draft"|"publish"만 허용한다.
+
+    topic_id: CALCMATE-AUTO-CONTENT-TOPIC-GAP3-IMPLEMENT-01 — 선택적(additive)
+    keyword-only 성격의 인자(기본값 None). None이면 entry에 "topic_id" 키 자체를
+    넣지 않아 기존(레거시) entry와 완전히 동일한 shape을 유지한다(기존 호출부는
+    한 글자도 바꾸지 않아도 이전과 동일하게 동작). 값이 주어지면 entry에
+    "topic_id"를 그대로 저장한다 — 이 함수는 topic_id의 존재 여부를 검증하지
+    않는다(GAP3-READONLY-DESIGN-AUDIT-01 STEP15: 실제 Topic 존재 검증은 실행
+    시점에 Topic 전용 실행 함수가 fail-closed로 수행).
+
+    중복 방지: 동일 scheduled_at(절대시각 기준) + mode 조합의 "pending" 예약이
+    이미 있으면 새로 추가하지 않고 그 기존 entry를 그대로 반환한다(entry에
+    "duplicate": True가 추가되어 호출자가 구분할 수 있다). completed/failed
+    예약은 이 중복 검사에서 제외된다(같은 시각·모드라도 재예약 가능). 이번
+    STEP에서는 dedup key에 topic_id를 포함하지 않는다(GAP3-READONLY-DESIGN-
+    AUDIT-01에서 이미 식별된 "다른 topic이 같은 시각/mode를 예약하면 오탐
+    중복 처리된다"는 문제는 Publishing Planner가 슬롯을 유일하게 배정하도록
+    설계하는 후속 단계에서 재검토하기로 명시적으로 보류함 — 이번 STEP은
+    dedup 정책을 임의로 바꾸지 않는다).
+    성공적으로 새로 추가된 경우 "duplicate": False가 포함된 entry를 반환한다
+    (반환값은 항상 entry-shape이므로 기존 호출부(entry["id"] 등 접근)는
+    그대로 호환된다).
+
+    Race condition 제거: execute_due_oneoff()가 사용하는 oneoff_scheduler.lock을
+    이 함수도 사용해 "최신 JSON 재로드 → 중복 확인 → 추가 → 저장"을 lock 보유
+    상태에서 원자적으로 수행한다. lock은 non-blocking 파일 존재 검사이므로
+    재귀적으로 다시 잡는 경로가 없어 deadlock 위험이 없다(이 함수는
+    execute_due_oneoff()/run_oneoff_scheduler_loop() 내부에서 호출되지 않음 —
+    완전히 별도의 호출 경로). lock이 계속 사용 중이면 짧게 재시도 후 실패를
+    RuntimeError로 알린다(실행 중인 WP 발행이 오래 걸릴 수 있으므로 무한 대기
+    대신 명확한 실패를 반환)."""
+    if scheduled_at.tzinfo is None:
+        raise ValueError("scheduled_at은 timezone-aware datetime이어야 합니다(naive 금지)")
+    mode = str(mode or "").strip().lower()
+    if mode not in ONEOFF_MODES:
+        raise ValueError(f"허용되지 않는 mode: {mode!r} (허용값: {ONEOFF_MODES})")
+
+    acquired = False
+    for _ in range(max(1, lock_retries)):
+        if _acquire_oneoff_lock(cfg):
+            acquired = True
+            break
+        time.sleep(lock_retry_interval)
+    if not acquired:
+        raise RuntimeError(
+            "1회성 예약 lock 획득 실패 — 다른 1회성 예약 작업(추가 또는 실행)이 "
+            "진행 중입니다. 잠시 후 다시 시도하세요."
+        )
+
+    try:
+        reservations = load_oneoff(cfg)  # lock 보유 중 최신 상태 재로드
+
+        target_key = _abs_time_key(scheduled_at)
+        for e in reservations:
+            if e.get("status") != "pending" or e.get("mode") != mode:
+                continue
+            try:
+                existing_key = _abs_time_key(datetime.fromisoformat(e["scheduled_at"]))
+            except Exception:
+                continue
+            if existing_key == target_key:
+                dup = dict(e)
+                dup["duplicate"] = True
+                return dup
+
+        entry = {
+            "id": f"oneoff_{datetime.now(KST).strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}",
+            "scheduled_at": scheduled_at.isoformat(),
+            "mode": mode,
+            "status": "pending",
+            "created_at": datetime.now(KST).isoformat(),
+            "executed_at": None,
+            "result": None,
+            "duplicate": False,
+        }
+        if topic_id is not None:
+            entry["topic_id"] = topic_id
+        reservations.append(entry)
+        save_oneoff(cfg, reservations)
+        return entry
+    finally:
+        _release_oneoff_lock(cfg)
+
+
+def get_due_oneoff(cfg: dict, now: datetime = None) -> list:
+    """status=pending이고 scheduled_at <= now인 1회성 예약 목록을 반환한다.
+
+    now는 반드시 timezone-aware여야 한다(naive 금지 — F번 검증 항목).
+    completed/failed로 전환된 예약은 status가 더 이상 "pending"이 아니므로
+    이 함수가 두 번 다시 선택하지 않는다(E번 검증 항목 — 재실행 방지)."""
+    now = now or datetime.now(KST)
+    if now.tzinfo is None:
+        raise ValueError("now는 timezone-aware datetime이어야 합니다(naive 금지)")
+
+    due = []
+    for e in load_oneoff(cfg):
+        if e.get("status") != "pending":
+            continue
+        try:
+            sched_dt = datetime.fromisoformat(e["scheduled_at"])
+        except Exception:
+            continue
+        if sched_dt.tzinfo is None:
+            sched_dt = sched_dt.replace(tzinfo=KST)
+        if sched_dt <= now:
+            due.append(e)
+    return due
+
+
+def mark_oneoff_result(cfg: dict, reservation_id: str, status: str, result: dict = None):
+    """1회성 예약 1건의 실행 결과를 기록한다. status는 "completed"|"failed"만
+    허용 — 기록 이후 get_due_oneoff()가 이 예약을 다시 반환하지 않는다."""
+    if status not in ("completed", "failed"):
+        raise ValueError(f"허용되지 않는 status: {status!r}")
+    reservations = load_oneoff(cfg)
+    for e in reservations:
+        if e.get("id") == reservation_id:
+            # SINGLE-OWNER-HARDENING M3: 이미 completed/failed로 확정된 예약을
+            # 뒤늦은(stale) 실행자가 덮어쓰지 못하게 한다 — pending일 때만 기록.
+            if e.get("status") != "pending":
+                LOG.warning("1회성 예약 결과 기록 생략(이미 %s): id=%s",
+                            e.get("status"), reservation_id)
+                return False
+            e["status"] = status
+            e["executed_at"] = datetime.now(KST).isoformat()
+            e["result"] = result
+            break
+    save_oneoff(cfg, reservations)
+    return True
+
+
+def execute_due_oneoff(cfg: dict, entry: dict, resolve_fn) -> str:
+    """1회성 예약 1건을 실행한다.
+
+    resolve_fn(mode, topic_id) -> run_once_fn 형태의 콜러블이어야 한다(main.py의
+    resolve_blog_oneoff_publish_fn과 짝을 이룸) — 이 모듈은 blog_scheduler_adapter/
+    publisher/topic_pool을 직접 import하지 않는다(기존 execute_due_post와 동일하게
+    실행 함수 자체는 항상 호출부가 주입, 이 함수는 Topic Pool 상태를 직접 변경하지
+    않는다 — GAP3-READONLY-DESIGN-AUDIT-01 STEP9/11 결론).
+
+    topic_id 인자(CALCMATE-AUTO-CONTENT-TOPIC-GAP3-IMPLEMENT-01): entry에
+    "topic_id"가 없는(레거시) reservation은 entry.get("topic_id")가 None을
+    반환하므로 resolve_fn(mode, None)이 호출되며, 이는 기존 resolve_fn(mode)
+    단일 인자 호출과 동일하게 취급되어야 한다(resolve_fn 구현체 쪽 책임 —
+    이 함수 자체는 항상 두 인자를 전달할 뿐 분기하지 않는다).
+
+    실행 직후 즉시 completed/failed로 전환해 같은 tick 또는 다음 tick에서
+    재실행되지 않도록 한다."""
+    try:
+        run_once_fn = resolve_fn(entry.get("mode", "draft"), entry.get("topic_id"))
+        stats = run_once_fn(cfg, max_count=1) or {}
+        produced = stats.get("produced", 0) if isinstance(stats, dict) else 0
+        if produced >= 1:
+            mark_oneoff_result(cfg, entry["id"], "completed", stats)
+            LOG.info("1회성 예약 완료: id=%s mode=%s", entry["id"], entry.get("mode"))
+            return "completed"
+        mark_oneoff_result(cfg, entry["id"], "failed", stats)
+        LOG.info("1회성 예약 미생산: id=%s mode=%s", entry["id"], entry.get("mode"))
+        return "failed"
+    except Exception as e:
+        mark_oneoff_result(cfg, entry["id"], "failed", {"error": str(e)[:300]})
+        LOG.error("1회성 예약 실행 오류: id=%s error=%s", entry["id"], e, exc_info=True)
+        return "failed"
+
+
+def _oneoff_lock_path(cfg: dict) -> Path:
+    return _schedule_dir(cfg) / "oneoff_scheduler.lock"
+
+
+# 이 프로세스가 획득한 oneoff lock의 owner token(lock 경로별). token 인자 없이
+# 호출하는 기존 _release_oneoff_lock(cfg) 호출부 호환용.
+_ONEOFF_LOCK_TOKENS: dict = {}
+
+
+def _acquire_oneoff_lock(cfg: dict, stale_seconds: int = 1800):
+    """기존 _acquire_lock()과 동일한 패턴이나 완전히 별도 파일을 사용한다 —
+    recurring 루프의 scheduler.lock과 절대 공유하지 않는다.
+
+    SINGLE-OWNER-HARDENING S1: exists()→write_text() 대신 O_CREAT|O_EXCL로 원자적
+    생성하고 owner token("pid:uuid:시각")을 기록한다. 성공 시 token(참값) 반환,
+    실패 시 False — 기존 호출부의 참/거짓 판정은 그대로 동작한다. stale 정책
+    (stale_seconds=1800)은 유지하되, 삭제 직전에 mtime을 다시 확인한다."""
+    p = _oneoff_lock_path(cfg)
+    try:
+        if p.exists() and time.time() - p.stat().st_mtime > stale_seconds:
+            if time.time() - p.stat().st_mtime > stale_seconds:
+                p.unlink(missing_ok=True)
+    except FileNotFoundError:
+        pass
+    except Exception:
+        return False
+    token = f"{os.getpid()}:{uuid.uuid4().hex}:{datetime.now(KST).isoformat()}"
+    try:
+        fd = os.open(str(p), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except Exception:
+        return False
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(token)
+    except Exception:
+        p.unlink(missing_ok=True)
+        return False
+    _ONEOFF_LOCK_TOKENS[str(p)] = token
+    return token
+
+
+def _release_oneoff_lock(cfg: dict, token: str = None) -> bool:
+    """자신이 획득한 lock(token 일치)만 삭제한다 — 다른 owner의 lock은 지우지 않는다."""
+    p = _oneoff_lock_path(cfg)
+    token = token or _ONEOFF_LOCK_TOKENS.get(str(p))
+    if not token:
+        return False
+    try:
+        current = p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        _ONEOFF_LOCK_TOKENS.pop(str(p), None)
+        return False
+    except Exception:
+        return False
+    if current != token:
+        LOG.warning("1회성 예약 lock 해제 생략: 다른 owner의 lock")
+        _ONEOFF_LOCK_TOKENS.pop(str(p), None)
+        return False
+    p.unlink(missing_ok=True)
+    _ONEOFF_LOCK_TOKENS.pop(str(p), None)
+    return True
+
+
+def _blog_schedule_config_path(cfg: dict) -> Path:
+    """cfg가 로드된 config.yaml 경로를 재구성한다(modules/content_sync.py::
+    _content_sync_config_path()와 동일한 목적이나, scheduler.py는 _instance_id
+    개념을 쓰지 않으므로(이 파일 다른 곳의 관례 그대로, 예: line 92
+    `Path(cfg.get("_root", "."))`) 그 부분은 추가하지 않는다)."""
+    root = Path(cfg.get("_root", "."))
+    return root / "config" / "config.yaml"
+
+
+def _blog_schedule_enabled_now(cfg: dict, fallback: bool) -> bool:
+    """1회성 예약 루프 tick마다 config.yaml의 BLOG_SCHEDULE.enabled만 다시
+    읽는다(modules/content_sync.py::_content_sync_enabled_now()와 동일한
+    "가벼운 최소 재로딩" 패턴 재사용 — CALCMATE-AUTO-CONTENT-AUTO-PUBLISHING-
+    EXECUTION-DECOUPLING-A-IMPLEMENT-01).
+
+    run_oneoff_scheduler_loop()는 스레드 시작 시점에 캡처된 cfg를 그대로 들고
+    있으므로(기존 관례, 재시작 필요 — dashboard.py 다른 스레드들과 동일), 이
+    함수 없이는 실행 중 BLOG_SCHEDULE.enabled를 off로 바꿔도 반영되지 않는다.
+    이 함수는 그 값만 매 tick 다시 확인해, topic_id가 없는(Golden10 계열)
+    due 예약을 건너뛸지 판단하는 데만 쓰인다 — topic_id가 있는(Topic Pool)
+    예약의 실행 여부에는 영향을 주지 않는다.
+
+    secrets 병합/스키마 검증 등 load_config()의 나머지 처리는 건드리지 않는다.
+    파일을 못 읽거나 파싱에 실패하면 기존에 알던 값(fallback, 스레드 시작
+    시점의 cfg 값)을 그대로 유지한다(재로딩 실패로 오동작하지 않도록)."""
+    import yaml
+    path = _blog_schedule_config_path(cfg)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+        bs = raw.get("BLOG_SCHEDULE", {}) or {}
+        return bool(bs.get("enabled", fallback))
+    except Exception:
+        return fallback
+
+
+def run_oneoff_scheduler_loop(cfg: dict, resolve_fn, poll_seconds: int = 30):
+    """1회성 예약 전용 루프. 기존 run_scheduler_loop()(recurring publish_slots)와
+    완전히 분리된 별도 루프이며, 그 함수의 동작에는 어떤 영향도 주지 않는다.
+
+    매 tick마다 due 상태인 예약을 순서대로(생성 순) 최대 1건씩 lock을 잡고
+    실행한다. 이 함수를 실제로 기동(스레드 시작)하는 것은 이번 STEP의 범위가
+    아니다 — dashboard.py 쪽 기동 조건은 별도로 연결하되, 이 함수 자체는
+    루프 로직만 제공한다.
+
+    Golden10/Topic 실행 gate 분리(CALCMATE-AUTO-CONTENT-AUTO-PUBLISHING-
+    EXECUTION-DECOUPLING-A-IMPLEMENT-01): dashboard.py가 이 루프를
+    "BLOG_SCHEDULE.enabled OR AUTO_PUBLISHING.enabled"로 기동하게 되면,
+    AUTO_PUBLISHING만 켜진 상태에서도 이 루프가 돌게 된다. 이 경우
+    topic_id가 없는(Golden10 계열) due 예약까지 실행되면 "BLOG_SCHEDULE.enabled
+    가 꺼져 있으면 예약이 실행되지 않는다"는 기존 약속이 깨진다. 따라서 이
+    루프 자신이 매 tick `_blog_schedule_enabled_now()`로 최신 값을 확인해,
+    topic_id가 없는 예약은 BLOG_SCHEDULE.enabled가 켜져 있을 때만 실행하고,
+    꺼져 있으면 **실행하지 않고 그대로 pending으로 남긴다**(실패 처리 금지 —
+    completed/failed 전환도, retry count 증가도 없음. mark_oneoff_result()를
+    호출하지 않고 단순히 이번 tick에서 건너뛴다). topic_id가 있는(Topic Pool)
+    예약은 이 gate의 영향을 받지 않고 항상 정상 처리된다."""
+    LOG.info("1회성 예약 스케줄러 시작 (poll=%ds)", poll_seconds)
+    non_owner_logged = False
+    while True:
+        # SINGLE-OWNER-HARDENING M1: production owner(load_config(wp_target=
+        # "production")가 붙이는 명시적 표식)만 예약을 소비한다. 그 외(Streamlit,
+        # standalone Task, local 미리보기)는 lock/상태/WP를 건드리지 않고 대기만 한다.
+        if cfg.get("_wp_target") != "production":
+            if not non_owner_logged:
+                LOG.warning("1회성 예약 소비 안 함: production owner 아님(_wp_target=%r)",
+                            cfg.get("_wp_target"))
+                non_owner_logged = True
+            time.sleep(poll_seconds)
+            continue
+        try:
+            blog_enabled_now = _blog_schedule_enabled_now(
+                cfg, cfg.get("BLOG_SCHEDULE", {}).get("enabled", False))
+            for entry in get_due_oneoff(cfg):
+                if entry.get("topic_id") is None and not blog_enabled_now:
+                    LOG.info("Golden10 예약 skip(BLOG_SCHEDULE.enabled=off): id=%s",
+                             entry.get("id"))
+                    continue
+                token = _acquire_oneoff_lock(cfg)
+                if token:
+                    try:
+                        # SINGLE-OWNER-HARDENING M3: lock 획득 후 최신 상태 재확인 —
+                        # 여전히 pending이고 due인 경우에만 실행한다.
+                        fresh = next((e for e in get_due_oneoff(cfg)
+                                      if e.get("id") == entry.get("id")), None)
+                        if fresh is None:
+                            LOG.info("1회성 예약 skip(이미 처리됨/더 이상 due 아님): id=%s",
+                                     entry.get("id"))
+                            continue
+                        execute_due_oneoff(cfg, fresh, resolve_fn)
+                    finally:
+                        _release_oneoff_lock(cfg, token)
+                else:
+                    LOG.info("다른 1회성 실행이 진행 중(lock) — 이번 주기 건너뜀")
+                    break
+        except Exception as e:
+            LOG.error("1회성 예약 스케줄러 루프 오류: %s", e, exc_info=True)
+            _alert_throttled(cfg, "oneoff_scheduler_loop", "ERROR",
+                             "1회성 예약 스케줄러 루프 예외", e)
+        time.sleep(poll_seconds)

@@ -96,7 +96,11 @@ def split_secrets(cfg: dict) -> tuple[dict, dict]:
     return public, secret
 
 
-def load_config(path: str = None) -> dict:
+def load_config(path: str = None, *, wp_target: str = None) -> dict:
+    """wp_target(CALCMATE-WP-ENDPOINT-FIX-IMPLEMENT-01): None/"local"이면 기존 동작
+    그대로. "production"이면 _apply_wp_target()이 nested wordpress.* 세트로 flat
+    WORDPRESS_* 3개를 동시에 교체한다. 이 함수는 환경변수를 읽지 않는다 — target
+    해석은 호출부(api/services/worker_manager.py)의 책임이다."""
     if path is None:
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         path = os.path.join(base, "config", "config.yaml")
@@ -104,6 +108,7 @@ def load_config(path: str = None) -> dict:
         cfg = yaml.safe_load(f)
     cfg = merge_secrets(cfg, path)   # secrets.yaml 병합(secrets 우선)
     cfg = _normalize(cfg)
+    cfg = _apply_wp_target(cfg, wp_target)
     _validate(cfg)
     return cfg
 
@@ -116,6 +121,53 @@ def _normalize(cfg: dict) -> dict:
     legacy = cfg.get("WORDPRESS_PASSWORD")
     if legacy and not cfg.get("WORDPRESS_APP_PASSWORD"):
         cfg["WORDPRESS_APP_PASSWORD"] = legacy
+    return cfg
+
+
+WP_TARGETS = ("local", "production")
+_WP_PRODUCTION_FIELDS = (
+    ("url", "WORDPRESS_URL"),
+    ("username", "WORDPRESS_USERNAME"),
+    ("app_password", "WORDPRESS_APP_PASSWORD"),
+)
+
+
+def _apply_wp_target(cfg: dict, wp_target: str = None) -> dict:
+    """WordPress 대상 선택(CALCMATE-WP-ENDPOINT-FIX-IMPLEMENT-01).
+
+    - None / "local": 아무것도 바꾸지 않는다(flat WORDPRESS_* = 로컬/테스트 세트).
+    - "production": secrets.yaml의 nested wordpress.{url,username,app_password}를
+      하나의 credential set으로 검증한 뒤 flat 3개 키를 동시에 교체한다. 하나라도
+      비어 있으면 ConfigError(fail-closed) — "production URL + local password"
+      조합은 만들어지지 않는다. 구 키 WORDPRESS_PASSWORD도 제거해 잔재를 없앤다.
+    - 그 외 값: ConfigError. 문자열 추론/fallback은 하지 않는다.
+
+    예외 메시지에는 누락 필드 이름만 담고, 값(URL/username/password)은 담지 않는다."""
+    if wp_target is None or wp_target == "local":
+        return cfg
+    if wp_target != "production":
+        raise ConfigError(
+            f"허용되지 않는 WordPress target입니다(허용값: {', '.join(WP_TARGETS)})")
+
+    wp = cfg.get("wordpress")
+    if not isinstance(wp, dict):
+        raise ConfigError("Missing production WordPress configuration: wordpress section")
+    values = {}
+    missing = []
+    for src, _dst in _WP_PRODUCTION_FIELDS:
+        v = wp.get(src)
+        v = v.strip() if isinstance(v, str) else ""
+        if not v:
+            missing.append(src)
+        values[src] = v
+    if missing:
+        raise ConfigError(
+            f"Missing production WordPress configuration: {', '.join(missing)}")
+
+    for src, dst in _WP_PRODUCTION_FIELDS:
+        cfg[dst] = values[src]
+    cfg.pop("WORDPRESS_PASSWORD", None)
+    cfg["_wp_target"] = "production"
     return cfg
 
 
