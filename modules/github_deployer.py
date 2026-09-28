@@ -90,29 +90,183 @@ def _enable_pages(cfg: dict, full_name: str, branch: str = "main", path: str = "
         LOG.warning("Pages 활성화 경고(이미 켜졌을 수 있음): %s", e)
 
 
+# ── 계산기 Deploy: 로컬 Git 경로 ─────────────────────────────────────────
+# Contents API로 원격 master에 파일마다 직접 커밋하던 방식은 로컬/원격을 분기시키고
+# 파일 수만큼 Pages 배포를 일으켰다. 계산기 Deploy는 이제 로컬 저장소의
+# data/workspace/_site/<slug>/** 만 stage → 1회 commit → 원격 불변 확인 후 push 한다.
+_SITE_REL = "data/workspace/_site"
+_BRANCH = "master"
+# _site 루트의 공용 사이트 파일/페이지 — 계산기 slug로 쓸 수 없다(자동 stage 금지 대상).
+_RESERVED_SITE_ENTRIES = frozenset({
+    "index.html", "sitemap.xml", "CNAME", "about", "contact", "privacy", "terms",
+    "404", "404.html", "robots.txt", "site.css",
+})
+
+
+def _git(root: str, args: list):
+    import subprocess
+    return subprocess.run(["git", "-c", "core.quotepath=false", *args], cwd=root,
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=120)
+
+
+def _rev(root: str, ref: str):
+    r = _git(root, ["rev-parse", "--verify", "--quiet", ref])
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def _validate_slug(slug: str) -> str | None:
+    """slug가 _site 바로 아래의 단일 계산기 디렉터리 이름인지 확인. 문제 시 사유 반환."""
+    s = str(slug or "")
+    if not s.strip():
+        return "empty_slug"
+    if s != s.strip() or s in (".", "..") or s.startswith("."):
+        return f"invalid_slug:{s!r}"
+    if any(ch in s for ch in ("/", "\\", ":", "\0")) or os.path.isabs(s):
+        return f"invalid_slug:{s!r}"
+    if s in _RESERVED_SITE_ENTRIES:
+        return f"reserved_site_entry:{s!r}"
+    return None
+
+
+def _changed_paths(root: str, pathspec: str) -> list | None:
+    """pathspec 아래의 modified/untracked/deleted/staged 경로(저장소 기준, '/' 구분)."""
+    r = _git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", pathspec])
+    if r.returncode != 0:
+        return None
+    out, entries, i = [], r.stdout.split("\0"), 0
+    while i < len(entries):
+        e = entries[i]
+        i += 1
+        if len(e) < 4:
+            continue
+        out.append(e[3:])
+        if e[0] in ("R", "C"):  # rename/copy는 원래 경로가 다음 항목으로 온다
+            out.append(entries[i])
+            i += 1
+    return out
+
+
+def _deploy_slug_local(root: str, slug: str, files: dict, branch: str = _BRANCH) -> tuple:
+    """_site/<slug>/ 의 확정 스냅샷을 로컬 commit 1회 + 원격 불변 시에만 push.
+    반환: (ok, 메시지). 어떤 불확실한 상태도 fail-closed(commit/push 없이 중단)."""
+    from pathlib import Path
+    from .site_snapshot import _SNAPSHOT_FILES
+
+    bad = _validate_slug(slug)
+    if bad:
+        return False, f"배포 중단 — {bad}"
+
+    top = _git(root, ["rev-parse", "--show-toplevel"])
+    if top.returncode != 0:
+        return False, "배포 중단 — git 저장소가 아님"
+    repo_root = Path(top.stdout.strip()).resolve()
+    root = str(repo_root)
+    site_root = (repo_root / _SITE_REL).resolve()
+    target = (site_root / slug).resolve()
+    if target.parent != site_root or target.name != slug or not target.is_dir():
+        return False, f"배포 중단 — _site 하위 계산기 디렉터리가 아님: {slug!r}"
+    slug_rel = f"{_SITE_REL}/{slug}"
+
+    # 배포 파일은 이미 Build가 _site/<slug>/에 쓴 확정 스냅샷과 정확히 같아야 한다.
+    deploy_rel = []
+    for fname, content in files.items():
+        if fname.startswith("_"):
+            continue
+        if fname not in _SNAPSHOT_FILES:
+            return False, f"배포 중단 — 허용되지 않는 파일명: {fname!r}"
+        p = target / fname
+        if not p.is_file() or p.read_text(encoding="utf-8") != content:
+            return False, f"배포 중단 — 스냅샷 불일치: {slug_rel}/{fname}"
+        deploy_rel.append(f"{slug_rel}/{fname}")
+    if not deploy_rel:
+        return False, "배포 중단 — 배포할 파일 없음"
+
+    if _git(root, ["symbolic-ref", "--short", "HEAD"]).stdout.strip() != branch:
+        return False, f"배포 중단 — 현재 브랜치가 {branch}가 아님"
+    staged = _git(root, ["diff", "--cached", "--name-only"])
+    if staged.returncode != 0 or staged.stdout.strip():
+        return False, "배포 중단 — index에 이미 staged 변경이 있음(index_not_clean)"
+
+    # Remote divergence guard: local HEAD == origin/<branch> 일 때만 진행(ahead도 거부).
+    f = _git(root, ["fetch", "origin", branch])
+    if f.returncode != 0:
+        return False, f"배포 중단 — git fetch 실패: {f.stderr.strip()}"
+    head, origin = _rev(root, "HEAD"), _rev(root, f"origin/{branch}")
+    if not head or head != origin:
+        return False, f"배포 중단 — remote_diverged: HEAD={head} origin/{branch}={origin}"
+
+    # 기존 dirty 보호: slug 아래 변경은 전부 이번 스냅샷 파일이어야 한다.
+    changed = _changed_paths(root, slug_rel)
+    if changed is None:
+        return False, "배포 중단 — git status 실패"
+    unexpected = sorted(set(changed) - set(deploy_rel))
+    if unexpected:
+        return False, f"배포 중단 — 스냅샷 외 기존 변경(pre_existing_dirty): {unexpected}"
+    to_commit = sorted(set(changed) & set(deploy_rel))
+    if not to_commit:
+        return True, "변경 없음 — 이미 배포된 스냅샷"
+
+    a = _git(root, ["add", "--", *to_commit])
+    if a.returncode != 0:
+        return False, f"배포 중단 — git add 실패: {a.stderr.strip()}"
+    staged = _git(root, ["diff", "--cached", "--name-only", "-z"])
+    staged_set = {p for p in staged.stdout.split("\0") if p}
+    if staged.returncode != 0 or staged_set != set(to_commit):
+        # 방금 이 함수가 stage한 경로만 index에서 내린다(작업트리는 그대로).
+        _git(root, ["reset", "-q", "--", *to_commit])
+        return False, f"배포 중단 — staged 목록 불일치: {sorted(staged_set)}"
+    c = _git(root, ["commit", "-q", "-m", f"deploy calculator {slug}"])
+    if c.returncode != 0:
+        _git(root, ["reset", "-q", "--", *to_commit])
+        return False, f"배포 중단 — git commit 실패: {c.stderr.strip()}"
+    new_head = _rev(root, "HEAD")
+
+    # push 직전 재확인 — 그 사이 원격이 바뀌었으면 push하지 않는다(pull/rebase/force 없음).
+    f = _git(root, ["fetch", "origin", branch])
+    now = _rev(root, f"origin/{branch}") if f.returncode == 0 else None
+    if now != head:
+        return False, (f"push 중단 — 원격 변경 감지(expected={head} now={now}). "
+                       f"로컬 commit {new_head}만 생성됨")
+    p = _git(root, ["push", "origin", branch])
+    if p.returncode != 0:
+        return False, f"push 실패: {p.stderr.strip()} — 로컬 commit {new_head}만 생성됨"
+    LOG.info("계산기 배포 push 완료: %s (%s)", slug, new_head)
+    return True, new_head
+
+
+def _origin_full_name(root: str) -> str | None:
+    """origin URL(https/ssh)에서 owner/repo 추출."""
+    import re
+    url = _git(root, ["config", "--get", "remote.origin.url"]).stdout.strip()
+    m = re.search(r"github\.com[:/]+([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
 def deploy_app(cfg: dict, files: dict, repo: str = None, subdir: str = "") -> tuple:
-    """files={'index.html':..,'style.css':..,'script.js':..} 업로드.
+    """files={'index.html':..,'style.css':..,'script.js':..} = _site/<subdir>/ 확정 스냅샷.
     반환: (ok, deploy_url 또는 메시지).
 
     실제 운영 Pages 구성(build_type=workflow, .github/workflows/deploy.yml)은
     master 브랜치의 data/workspace/_site/** 변경을 감지해 Actions가 빌드/배포한다.
-    이 함수는 그 경로에 맞춰 파일을 master에 직접 커밋한다(Contents API PUT도
-    push 이벤트로 집계되어 workflow가 트리거된다) — Pages 활성화(source 브랜치
-    설정) 자체는 이미 올바르게 되어 있어 건드리지 않는다(Pages-source-config는
-    별도 승인 없이 변경하지 않는다는 원칙 유지).
+    이 함수는 GitHub Contents API로 원격에 직접 쓰지 않는다 — 로컬 저장소
+    (cfg["_root"])에서 data/workspace/_site/<subdir>/** 만 stage해 1회 commit하고,
+    local HEAD == origin/master(분기/ahead 모두 거부)였고 그 사이 원격이 바뀌지
+    않았을 때만 push한다. repo 인자는 호출부 호환용이며 배포 대상은 로컬 저장소의
+    origin이다(저장소 생성/Pages 설정 변경 없음).
     """
     if not is_configured(cfg):
         return False, "GITHUB_TOKEN 미설정 — 배포 건너뜀(로컬 미리보기만 가능)"
-    repo = repo or cfg.get("GITHUB_REPO") or "salarymate-calculators"
-    ok, full = create_repo(cfg, repo)
-    if not ok:
-        return False, full
+    root = cfg.get("_root") or "."
     try:
-        prefix = "data/workspace/_site/" + ((subdir.strip("/") + "/") if subdir else "")
-        for fname, content in files.items():
-            if fname.startswith("_"):
-                continue
-            _put_file(cfg, full, f"{prefix}{fname}", content)
+        # URL은 쓰기 전에 계산 — push 성공 후 URL 실패로 "실패" 보고되는 일이 없도록.
+        full = _origin_full_name(root)
+        if not full:
+            return False, "배포 중단 — origin이 GitHub 저장소가 아님"
+        ok, msg = _deploy_slug_local(root, subdir, files)
+        if not ok:
+            LOG.warning("deploy_app 중단(slug=%s): %s", subdir, msg)
+            return False, msg
         return True, get_deploy_url(cfg, full, subdir)
     except Exception as e:
         LOG.error("deploy_app 실패: %s", e)
