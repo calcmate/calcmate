@@ -323,7 +323,8 @@ def _origin_full_name(root: str) -> str | None:
 def deploy_app(cfg: dict, files: dict, repo: str = None, subdir: str = "",
                *, dry_run: bool = False) -> tuple:
     """files={'index.html':..,'style.css':..,'script.js':..} = _site/<subdir>/ 확정 스냅샷.
-    반환: (ok, deploy_url 또는 메시지).
+    반환: (ok, published_url 또는 메시지). published_url은 calculator_public_url()의
+    canonical 공개 URL(SITE_URL/<slug>/)이며 GitHub Pages(github.io) URL이 아니다.
 
     실제 운영 Pages 구성(build_type=workflow, .github/workflows/deploy.yml)은
     master 브랜치의 data/workspace/_site/** 변경을 감지해 Actions가 빌드/배포한다.
@@ -344,9 +345,13 @@ def deploy_app(cfg: dict, files: dict, repo: str = None, subdir: str = "",
             plan = _plan_slug_deploy(root, subdir, files, dry_run=True)
             plan.pop("_root", None)
             full = _origin_full_name(root)
-            plan["deploy_url"] = get_deploy_url(cfg, full, subdir) if full else None
+            try:
+                plan["deploy_url"], url_err = calculator_public_url(cfg, subdir), None
+            except ValueError as e:
+                plan["deploy_url"], url_err = None, str(e)
             extra = ([] if is_configured(cfg) else ["GITHUB_TOKEN 미설정"]) + \
-                    ([] if full else ["origin이 GitHub 저장소가 아님"])
+                    ([] if full else ["origin이 GitHub 저장소가 아님"]) + \
+                    ([url_err] if url_err else [])
             if extra:
                 plan["blockers"] += extra
                 plan["deploy_allowed"] = False
@@ -361,24 +366,41 @@ def deploy_app(cfg: dict, files: dict, repo: str = None, subdir: str = "",
         return False, "GITHUB_TOKEN 미설정 — 배포 건너뜀(로컬 미리보기만 가능)"
     try:
         # URL은 쓰기 전에 계산 — push 성공 후 URL 실패로 "실패" 보고되는 일이 없도록.
-        full = _origin_full_name(root)
-        if not full:
+        try:
+            url = calculator_public_url(cfg, subdir)
+        except ValueError as e:
+            return False, f"배포 중단 — {e}"
+        if not _origin_full_name(root):
             return False, "배포 중단 — origin이 GitHub 저장소가 아님"
         ok, msg = _deploy_slug_local(root, subdir, files)
         if not ok:
             LOG.warning("deploy_app 중단(slug=%s): %s", subdir, msg)
             return False, msg
-        return True, get_deploy_url(cfg, full, subdir)
+        return True, url
     except Exception as e:
         LOG.error("deploy_app 실패: %s", e)
         return False, f"배포 실패: {e}"
 
 
-def get_deploy_url(cfg: dict, full_name: str, subdir: str = "") -> str:
-    """https://{owner}.github.io/{repo}/{subdir}/"""
-    try:
-        owner, repo = full_name.split("/", 1)
-    except ValueError:
-        owner, repo = "", full_name
-    base = f"https://{owner}.github.io/{repo}/"
-    return base + (subdir.strip("/") + "/" if subdir else "")
+# 계산기 공개 URL의 SSOT는 config SITE_URL(= https://calcmate.kr)이다 — site_generator,
+# scripts/_rebuild_site.py, cta_builder와 같은 규칙(SITE_URL 기본값, "{base}/{slug}/",
+# slug는 인코딩 없이 그대로)을 따른다. 블로그(/blog/)·WP origin·GitHub Pages는 대상이 아니다.
+_DEFAULT_SITE_URL = "https://calcmate.kr"
+
+
+def calculator_public_url(cfg: dict, slug: str) -> str:
+    """slug → 계산기 canonical 공개 URL(https://calcmate.kr/<slug>/).
+    SITE_URL이 https 루트 도메인이 아니거나(경로 포함 — 예: /blog/) github.io/salarymate
+    호스트면, 또는 slug가 단일 계산기 디렉터리 이름이 아니면 ValueError(fail-closed)."""
+    from urllib.parse import urlparse
+
+    bad = _validate_slug(slug)
+    if bad:
+        raise ValueError(f"published_url 계산 불가 — {bad}")
+    base = str(cfg.get("SITE_URL") or _DEFAULT_SITE_URL).strip().rstrip("/")
+    u = urlparse(base)
+    host = (u.hostname or "").lower()
+    if (u.scheme != "https" or not host or u.path or u.query or u.fragment
+            or host.endswith("github.io") or "salarymate" in host):
+        raise ValueError(f"published_url 계산 불가 — SITE_URL이 공개 사이트 루트가 아님: {base!r}")
+    return f"{base}/{slug}/"
