@@ -101,5 +101,17 @@ class CalculatorRepository:
         image_prompt_thumbnail/image_prompt_body 등) + generated_at 스탬프.
         기존 컬럼은 변경하지 않고 신규 컬럼만 추가(어댑터가 자동 생성)."""
         payload = dict(data or {})
+        # STEP24: review_score=0이 SQLiteAdapter/SheetsAdapter의 str(v or "")에 의해
+        # 빈 문자열로 소실되는 것을 막기 위해, 여기서만 미리 문자열화한다(STEP22/23에서
+        # 확인된 저장 경로 — approve()/reject() → update_generated()). None은 기존 그대로
+        # 어댑터에 넘겨 기존 "빈 값" 처리 동작을 유지한다(전역 adapter는 건드리지 않음).
+        if "review_score" in payload and payload["review_score"] is not None:
+            payload["review_score"] = str(payload["review_score"])
+        # STEP27: review_attempts=0도 동일한 소실 위험이 있다(STEP26에서 severance-pay/
+        # severance-pay-documents가 review_status=AUTO_APPROVED인데 review_attempts만
+        # 빈 문자열로 남은 것을 실증 확인 — auto_review_and_fix()의 attempts=0이 그 원인).
+        # review_score와 동일한 원칙으로 None만 기존 동작 유지, 그 외는 문자열화.
+        if "review_attempts" in payload and payload["review_attempts"] is not None:
+            payload["review_attempts"] = str(payload["review_attempts"])
         payload["generated_at"] = datetime.now().isoformat()
         self.update(calc_id, payload)
