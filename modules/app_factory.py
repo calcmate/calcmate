@@ -35,7 +35,7 @@ from adapters.db.factory import get_db_adapter, get_template_storage_adapter, ge
 from repositories.calculator_repository import CalculatorRepository
 from repositories.template_repository import TemplateRepository
 from .ai_roles import make_provider
-from .json_utils import parse_json_lenient
+from .json_utils import parse_json_lenient, try_parse_json
 from .logger import get_logger, BudgetTracker
 
 LOG = get_logger()
@@ -991,10 +991,18 @@ def _suggest_spec(cfg: dict, name: str, category: str, desc: str, tier: int,
                    existing: list, _contract: dict = None) -> tuple:
     """AI(GPT)로 계산기 스펙(input/output schema, formula, labels)을 설계한다.
 
-    generate_app()의 스펙 설계 단계(구 1)/2))를 순수 추출한 헬퍼 — 프롬프트·검증·
-    재시도 로직을 한 글자도 바꾸지 않고 그대로 옮긴 것이며 동작은 완전히 동일하다.
+    generate_app()의 스펙 설계 단계(구 1)/2))를 순수 추출한 헬퍼 — generate_app()은
+    이 헬퍼를 호출해 동일한 결과를 얻는다.
     STEP 24-1: 향후 "필드 자동 제안" 미리보기 등에서 이 헬퍼만 재사용하기 위한
-    순수 추출이며, 이번 STEP에서는 generate_app() 외의 신규 호출부를 추가하지 않는다.
+    순수 추출이며, generate_app() 외의 신규 호출부를 추가하지 않는다.
+
+    재시도 정책(이 STEP에서 보완): schema와 formula를 한 번에 생성하므로 formula가
+    schema에 없는 변수를 참조할 수 있다. 검증 실패 시:
+      [2-A] schema가 구조적으로 재사용 가능하면 schema를 고정하고 formula만 재생성한다
+            — 이미 확정된 schema를 다시 흔들지 않는다(formula 변수 ⊆ schema 키 계약).
+      [2-B] schema 자체를 재사용할 수 없을 때(비어 있거나 구조 오류)만 기존 전체 재설계를
+            1회 수행한다(이 경우는 formula가 아니라 schema를 다시 생성해야 하므로).
+    검증 실패를 무시하거나 schema에 임의 변수를 자동 추가해 오류를 숨기지 않는다.
 
     반환: (spec: dict, steps: list[(단계, 모델, 토큰)])
     """
@@ -1040,23 +1048,96 @@ def _suggest_spec(cfg: dict, name: str, category: str, desc: str, tier: int,
     spec = parse_json_lenient(t1)
     steps.append(("총괄(스펙)", m1, k1))
 
-    # [2] 저장 전 formula 검증 (실패 시 실패사유 알려주고 1회 재시도)
+    # [2] 저장 전 formula 검증
+    # ── Schema↔Formula Contract (복합 조건 계산기 보완) ────────────────────
+    # _suggest_spec()은 input_schema와 formula를 한 번에 설계하므로, AI가 schema에
+    # 없는 변수를 formula에서 참조하는 경우(예: deductible_contribution) Hard Gate
+    # validate_formula()가 실패한다 — Gate 자체는 정상이며 약화하지 않는다.
+    # 이 STEP의 구조 보완: 검증 실패 시 (1) '확정 schema 유지 + formula 전용 재생성'을
+    # 우선 시도하고, (2) 그래도 실패하면 기존 전체 재설계로 폴백한다.
+    # 즉, 이미 생성된 schema를 성급히 다시 흔들지 않고 'formula 변수 ⊆ schema 키'
+    # 계약을 지키는 방향으로만 재생성한다(금지: schema에 임의 변수 자동 추가 금지).
     from .formula_engine import validate_formula
     ok, msg = validate_formula(spec.get("formula", ""), spec.get("input_schema", {}))
     if not ok:
-        retry_sys = sys1 + (f"\n\n[재설계] 직전 응답의 formula가 검증 실패했다(사유: {msg}). "
-                            "요구사항(단일 산술 표현식 · input_schema 변수만 · 허용 함수만)을 반드시 지켜 다시 설계하라.")
-        try:
-            t1b, m1b, k1b = _chat(cfg, "orchestrator", retry_sys, u1, 800)
-            steps.append(("총괄(재시도)", m1b, k1b))
-            spec2 = parse_json_lenient(t1b)
-            ok2, msg2 = validate_formula(spec2.get("formula", ""), spec2.get("input_schema", {}))
-            if ok2:
-                spec, ok, msg = spec2, ok2, msg2   # 유효하면 재시도 결과 채택
-            else:
-                ok, msg = ok2, msg2                # 여전히 실패 → 원 spec 유지, 검증결과만 갱신
-        except Exception as e:
-            msg = f"{msg} / 재시도 오류: {e}"
+        _ins = spec.get("input_schema") or {}
+        _outs = spec.get("output_schema") or {}
+        _schema_usable = (
+            isinstance(_ins, dict) and len(_ins) >= 1
+            and isinstance(_outs, dict) and len(_outs) >= 1
+        )
+        if _schema_usable:
+            # [2-A] schema 고정 + formula만 재생성 (실패 원인 + 허용 변수 목록 전달)
+            # Contract(Mode B) 기반 생성이면 이 재생성 프롬프트에도 동일한 CONTRACT LOCK
+            # 섹션을 유지해야 한다 — 그렇지 않으면 formula 전용 재생성 단계에서
+            # scope_exclusions/legal_refs 강제가 사라져 Contract 제약을 우회할 수 있다
+            # (STEP 회귀 테스트 test_retry_prompt_keeps_scope_exclusions에서 실측 확인).
+            _formula_sys = (
+                _contract_lock_section +
+                "너는 웹 계산기 수식 설계자다. 아래 input_schema/output_schema는 이미 확정된 "
+                "스펙이다 — 키를 추가·삭제·이름변경하지 마라. 직전 formula가 검증 실패했다.\n"
+                f"실패 사유: {msg}\n"
+                "formula만 다시 설계하라.\n"
+                f"사용 가능한 input 변수(이것뿐이다): {', '.join(list(_ins.keys()))}\n"
+                f"출력해야 하는 output 키(이것뿐이다): {', '.join(list(_outs.keys()))}\n"
+                "규칙:\n"
+                "1. 수식에 쓸 수 있는 변수는 위 input 변수뿐이다. 그 외 변수명(중간 계산용 임의 이름 포함)을 쓰면 즉시 실패한다.\n"
+                "2. 중간 계산이 필요하면 별도 이름을 만들지 말고 min/max/round/abs/int/float와 산술 연산으로 한 식 안에서 직접 표현하라.\n"
+                "3. 단일 출력이면 산술 표현식 문자열 또는 {\"formula\": \"수식\"} JSON으로 응답하라. 복수 출력이면 {출력키: 산술식} JSON 객체로 응답하라 — 각 식은 반드시 input 변수만 사용하고 다른 출력키를 참조하지 마라.\n"
+                "4. 대입문(=), 세미콜론(;), 함수 정의, 미정의 함수 호출 금지. 허용 함수: min, max, round, abs, int, float 만.\n"
+                "5. 설명문·코드블록 없이 수식만 응답하라."
+            )
+            try:
+                _tf, _mf, _kf = _chat(cfg, "orchestrator", _formula_sys, u1, 800)
+                steps.append(("총괄(formula 재설계)", _mf, _kf))
+                _raw = (_tf or "").strip()
+                _raw = re.sub(r"^```[a-zA-Z]*\s*", "", _raw)
+                _raw = re.sub(r"\s*```$", "", _raw).strip()
+                # 응답 형태 허용:
+                #  (a) 단일 산술 표현식 문자열(비JSON — 원문을 후보로 사용),
+                #  (b) {출력키: 산술식} dict(복수 출력),
+                #  (c) 전체 spec envelope({"calculator_type":..., "formula": ...}) → formula만 추출.
+                # schema는 절대 이 응답에서 갱신하지 않는다(금지: schema에 임의 변수 자동 추가).
+                _parsed = try_parse_json(_raw)   # 비JSON/객체 외 → {}
+                _candidate = None
+                if isinstance(_parsed, dict) and _parsed:
+                    _env_keys = {"calculator_type", "input_schema", "output_schema", "formula", "labels"}
+                    if "formula" in _parsed and (set(_parsed) & _env_keys) and "formula" not in _ins:
+                        _candidate = _parsed.get("formula")
+                    else:
+                        _candidate = _parsed
+                elif isinstance(_parsed, str):
+                    _candidate = _parsed        # JSON 문자열("...") → 그 값 사용
+                elif _parsed in ({}, None, []):
+                    _candidate = _raw           # (a) 비JSON 단일 식 문자열
+                else:
+                    _candidate = _raw           # 배열 등 그 외 → validate_formula가 최종 판정
+                if _candidate in (None, "", "null"):
+                    ok2, msg2 = False, "formula 재설계 응답이 비어 있음"
+                else:
+                    ok2, msg2 = validate_formula(_candidate, _ins)
+                if ok2:
+                    # schema/labels는 1차 응답 그대로 유지하고 formula만 교체
+                    spec["formula"] = _candidate
+                    ok, msg = True, "OK"
+            except Exception as e:
+                # formula 전용 재설계 예외 → 아래 전체 재설계 폴백 진행
+                msg = f"{msg} / formula 재설계 오류: {e}"
+        if not ok:
+            # [2-B] 기존 전체 재설계 폴백 (schema 자체 재설계 허용 — 기존 동작 유지)
+            retry_sys = sys1 + (f"\n\n[재설계] 직전 응답의 formula가 검증 실패했다(사유: {msg}). "
+                                "요구사항(단일 산술 표현식 · input_schema 변수만 · 허용 함수만)을 반드시 지켜 다시 설계하라.")
+            try:
+                t1b, m1b, k1b = _chat(cfg, "orchestrator", retry_sys, u1, 800)
+                steps.append(("총괄(재시도)", m1b, k1b))
+                spec2 = parse_json_lenient(t1b)
+                ok2, msg2 = validate_formula(spec2.get("formula", ""), spec2.get("input_schema", {}))
+                if ok2:
+                    spec, ok, msg = spec2, ok2, msg2   # 유효하면 재시도 결과 채택
+                else:
+                    ok, msg = ok2, msg2                # 여전히 실패 → 원 spec 유지, 검증결과만 갱신
+            except Exception as e:
+                msg = f"{msg} / 재시도 오류: {e}"
     spec["_formula_valid"] = ok
     spec["_formula_msg"] = msg
     return spec, steps
@@ -1132,16 +1213,12 @@ def generate_app(cfg: dict, name: str, category: str = "", desc: str = "", tier:
     seo = parse_json_lenient(t3)
     steps.append(("작성(SEO/FAQ/초안)", m3, k3))
 
-    # 4) 이미지(Gemini): 이미지 프롬프트
-    sys4 = ("너는 이미지 프롬프트 디자이너다. 썸네일/본문용 영문 이미지 프롬프트를 만들어라. "
-            "순수 JSON만 반환: {\"image_prompt_thumbnail\":\"\",\"image_prompt_body\":\"\"}")
-    try:
-        t4, m4, k4 = _chat(cfg, "image", sys4, f"계산기: {name} ({category})", 400)
-        imgp = parse_json_lenient(t4)
-        steps.append(("이미지 프롬프트", m4, k4))
-    except Exception as e:
-        LOG.warning("이미지 프롬프트 생성 실패(무시): %s", e)
-        imgp = {"image_prompt_thumbnail": "", "image_prompt_body": ""}
+    # STEP(ISSUE-01 보완): 이 함수 자체의 이미지 프롬프트 생성 단계(_chat role="image")는
+    # 제거했다 — 결과(image_prompt_thumbnail/body)를 save_app()이 어디에도 저장하지 않아
+    # 매 생성마다 AI 호출 1회가 그대로 버려지고 있었다(코드 추적으로 소비처 0건 확인).
+    # 이미지 프롬프트가 실제로 필요한 화면은 dashboard.py의 별도 "이미지 프롬프트" 버튼이
+    # 이미 제공한다(modules/calculator_image_prompt_generator.py, repo.update_generated()로
+    # 저장 후 화면에 표시) — 그 기능은 이번 변경과 무관하게 그대로 유지된다.
 
     return {
         "name": name, "category": category, "description": desc,
@@ -1153,8 +1230,6 @@ def generate_app(cfg: dict, name: str, category: str = "", desc: str = "", tier:
         "html": code.get("html", ""), "css": code.get("css", ""), "js": code.get("js", ""),
         "seo_title": seo.get("seo_title", ""), "seo_desc": seo.get("seo_desc", ""),
         "faq": seo.get("faq", []), "blog_draft": seo.get("blog_draft", ""),
-        "image_prompt_thumbnail": imgp.get("image_prompt_thumbnail", ""),
-        "image_prompt_body": imgp.get("image_prompt_body", ""),
         "_formula_valid": spec.get("_formula_valid", True),
         "_formula_msg": spec.get("_formula_msg", ""),
         "_steps": steps,

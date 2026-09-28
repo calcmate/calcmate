@@ -128,7 +128,10 @@ def test_writer_step_receives_scope_exclusions(monkeypatch):
                           "고용/보험", "", 2, _contract=_CONTRACT)
     assert result["name"] == "실업급여 계산기"
     roles = {c["role"] for c in calls}
-    assert roles == {"orchestrator", "code", "writer", "image"}
+    # ISSUE-01 보완: generate_app()의 이미지 프롬프트 단계(_chat role="image")를
+    # 제거했다(소비처 0건 확인 — 상세 사유는 modules/app_factory.py의 해당 위치
+    # 주석 참고) — "image"는 더 이상 발생하는 role이 아니다.
+    assert roles == {"orchestrator", "code", "writer"}
     # writer user에 [Contract 생성 텍스트 제한] + 표현 포함
     writer = next(c for c in calls if c["role"] == "writer")
     assert "[Contract 생성 텍스트 제한" in writer["user"]
@@ -137,11 +140,9 @@ def test_writer_step_receives_scope_exclusions(monkeypatch):
     # orchestrator system: enforcement section 포함
     orch = next(c for c in calls if c["role"] == "orchestrator")
     assert "CONTRACT SCOPE EXCLUSIONS" in orch["system"]
-    # code/image 단계 prompt에 scope 제한 불필요 (중복 주입 없음)
+    # code 단계 prompt에 scope 제한 불필요 (중복 주입 없음)
     code = next(c for c in calls if c["role"] == "code")
-    img = next(c for c in calls if c["role"] == "image")
     assert "Scope Exclusions" not in code["system"] + code["user"]
-    assert "Scope Exclusions" not in img["system"] + img["user"]
 
 
 # ── Test 7: retry 경로에도 scope exclusion 유지 ────────────────────────────
