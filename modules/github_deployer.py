@@ -105,9 +105,11 @@ _RESERVED_SITE_ENTRIES = frozenset({
 
 def _git(root: str, args: list):
     import subprocess
+    # GIT_OPTIONAL_LOCKS=0: status 등 조회 명령이 index stat 캐시를 갱신(쓰기)하지 않도록.
+    env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
     return subprocess.run(["git", "-c", "core.quotepath=false", *args], cwd=root,
                           capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=120)
+                          errors="replace", timeout=120, env=env)
 
 
 def _rev(root: str, ref: str):
@@ -147,26 +149,73 @@ def _changed_paths(root: str, pathspec: str) -> list | None:
     return out
 
 
-def _deploy_slug_local(root: str, slug: str, files: dict, branch: str = _BRANCH) -> tuple:
-    """_site/<slug>/ 의 확정 스냅샷을 로컬 commit 1회 + 원격 불변 시에만 push.
-    반환: (ok, 메시지). 어떤 불확실한 상태도 fail-closed(commit/push 없이 중단)."""
+class _Blocked(Exception):
+    """실배포 모드에서 첫 차단 사유로 즉시 중단(fail-fast)."""
+
+
+def _remote_state(root: str, head: str, remote: str) -> str:
+    """local HEAD와 원격 branch head의 관계: in_sync/ahead/behind/diverged/unknown."""
+    if head == remote:
+        return "in_sync"
+    if _git(root, ["cat-file", "-e", f"{remote}^{{commit}}"]).returncode != 0:
+        return "unknown"  # 원격 커밋이 로컬에 없음(미fetch) — 최소 behind
+    if _git(root, ["merge-base", "--is-ancestor", remote, head]).returncode == 0:
+        return "ahead"
+    if _git(root, ["merge-base", "--is-ancestor", head, remote]).returncode == 0:
+        return "behind"
+    return "diverged"
+
+
+def _plan_slug_deploy(root: str, slug: str, files: dict, branch: str = _BRANCH,
+                      dry_run: bool = False) -> dict:
+    """배포 전 검증 + 예상 결과 계산. 저장소/원격에 어떤 쓰기도 하지 않는다
+    (실배포 모드의 fetch는 remote-tracking ref 갱신만 한다).
+
+    dry_run=False: 첫 차단 사유에서 _Blocked를 던진다(FIX-01 fail-fast 순서 유지).
+    dry_run=True : 가능한 모든 차단 사유를 blockers에 모아 반환한다. 원격은 fetch
+                   대신 ls-remote로 읽어 remote-tracking ref도 바꾸지 않는다."""
     from pathlib import Path
     from .site_snapshot import _SNAPSHOT_FILES
 
+    plan = {
+        "status": "dry_run" if dry_run else "checked", "dry_run": dry_run,
+        "slug": slug, "branch": branch, "target_path": None,
+        "files": [], "file_count": 0, "changed_files": [],
+        "commit_message": f"deploy calculator {slug}",
+        "commit_would_be_required": False, "push_would_be_required": False,
+        "local_head": None, "remote_head": None, "remote_state": None,
+        "deploy_allowed": False, "blocked_reason": None, "blockers": [],
+    }
+
+    def block(msg: str):
+        plan["blockers"].append(msg)
+        if not dry_run:
+            raise _Blocked(msg)
+
+    def done() -> dict:
+        plan["deploy_allowed"] = not plan["blockers"]
+        plan["blocked_reason"] = plan["blockers"][0] if plan["blockers"] else None
+        return plan
+
     bad = _validate_slug(slug)
     if bad:
-        return False, f"배포 중단 — {bad}"
+        block(bad)
+        return done()
 
     top = _git(root, ["rev-parse", "--show-toplevel"])
     if top.returncode != 0:
-        return False, "배포 중단 — git 저장소가 아님"
+        block("git 저장소가 아님")
+        return done()
     repo_root = Path(top.stdout.strip()).resolve()
     root = str(repo_root)
+    plan["_root"] = root
     site_root = (repo_root / _SITE_REL).resolve()
     target = (site_root / slug).resolve()
     if target.parent != site_root or target.name != slug or not target.is_dir():
-        return False, f"배포 중단 — _site 하위 계산기 디렉터리가 아님: {slug!r}"
+        block(f"_site 하위 계산기 디렉터리가 아님: {slug!r}")
+        return done()
     slug_rel = f"{_SITE_REL}/{slug}"
+    plan["target_path"] = slug_rel + "/"
 
     # 배포 파일은 이미 Build가 _site/<slug>/에 쓴 확정 스냅샷과 정확히 같아야 한다.
     deploy_rel = []
@@ -174,36 +223,64 @@ def _deploy_slug_local(root: str, slug: str, files: dict, branch: str = _BRANCH)
         if fname.startswith("_"):
             continue
         if fname not in _SNAPSHOT_FILES:
-            return False, f"배포 중단 — 허용되지 않는 파일명: {fname!r}"
+            block(f"허용되지 않는 파일명: {fname!r}")
+            continue
         p = target / fname
         if not p.is_file() or p.read_text(encoding="utf-8") != content:
-            return False, f"배포 중단 — 스냅샷 불일치: {slug_rel}/{fname}"
+            block(f"스냅샷 불일치: {slug_rel}/{fname}")
+            continue
         deploy_rel.append(f"{slug_rel}/{fname}")
-    if not deploy_rel:
-        return False, "배포 중단 — 배포할 파일 없음"
+    plan["files"], plan["file_count"] = deploy_rel, len(deploy_rel)
+    if not deploy_rel and not plan["blockers"]:
+        block("배포할 파일 없음")
 
     if _git(root, ["symbolic-ref", "--short", "HEAD"]).stdout.strip() != branch:
-        return False, f"배포 중단 — 현재 브랜치가 {branch}가 아님"
+        block(f"현재 브랜치가 {branch}가 아님")
     staged = _git(root, ["diff", "--cached", "--name-only"])
     if staged.returncode != 0 or staged.stdout.strip():
-        return False, "배포 중단 — index에 이미 staged 변경이 있음(index_not_clean)"
+        block("index에 이미 staged 변경이 있음(index_not_clean)")
 
-    # Remote divergence guard: local HEAD == origin/<branch> 일 때만 진행(ahead도 거부).
-    f = _git(root, ["fetch", "origin", branch])
-    if f.returncode != 0:
-        return False, f"배포 중단 — git fetch 실패: {f.stderr.strip()}"
-    head, origin = _rev(root, "HEAD"), _rev(root, f"origin/{branch}")
-    if not head or head != origin:
-        return False, f"배포 중단 — remote_diverged: HEAD={head} origin/{branch}={origin}"
+    # Remote divergence guard: local HEAD == 원격 branch head 일 때만 진행(ahead도 거부).
+    head = _rev(root, "HEAD")
+    if dry_run:
+        r = _git(root, ["ls-remote", "origin", f"refs/heads/{branch}"])
+        remote = r.stdout.split()[0] if r.returncode == 0 and r.stdout.strip() else None
+        if remote is None:
+            block(f"git ls-remote 실패: {r.stderr.strip()}")
+    else:
+        f = _git(root, ["fetch", "origin", branch])
+        if f.returncode != 0:
+            block(f"git fetch 실패: {f.stderr.strip()}")
+        remote = _rev(root, f"origin/{branch}")
+    plan["local_head"], plan["remote_head"] = head, remote
+    if head and remote:
+        plan["remote_state"] = _remote_state(root, head, remote)
+    if not head or head != remote:
+        block(f"remote_diverged: state={plan['remote_state']} "
+              f"HEAD={head} origin/{branch}={remote}")
 
     # 기존 dirty 보호: slug 아래 변경은 전부 이번 스냅샷 파일이어야 한다.
     changed = _changed_paths(root, slug_rel)
     if changed is None:
-        return False, "배포 중단 — git status 실패"
+        block("git status 실패")
+        return done()
     unexpected = sorted(set(changed) - set(deploy_rel))
     if unexpected:
-        return False, f"배포 중단 — 스냅샷 외 기존 변경(pre_existing_dirty): {unexpected}"
+        block(f"스냅샷 외 기존 변경(pre_existing_dirty): {unexpected}")
     to_commit = sorted(set(changed) & set(deploy_rel))
+    plan["changed_files"] = to_commit
+    plan["commit_would_be_required"] = plan["push_would_be_required"] = bool(to_commit)
+    return done()
+
+
+def _deploy_slug_local(root: str, slug: str, files: dict, branch: str = _BRANCH) -> tuple:
+    """_site/<slug>/ 의 확정 스냅샷을 로컬 commit 1회 + 원격 불변 시에만 push.
+    반환: (ok, 메시지). 어떤 불확실한 상태도 fail-closed(commit/push 없이 중단)."""
+    try:
+        plan = _plan_slug_deploy(root, slug, files, branch)
+    except _Blocked as e:
+        return False, f"배포 중단 — {e}"
+    root, head, to_commit = plan["_root"], plan["local_head"], plan["changed_files"]
     if not to_commit:
         return True, "변경 없음 — 이미 배포된 스냅샷"
 
@@ -216,7 +293,7 @@ def _deploy_slug_local(root: str, slug: str, files: dict, branch: str = _BRANCH)
         # 방금 이 함수가 stage한 경로만 index에서 내린다(작업트리는 그대로).
         _git(root, ["reset", "-q", "--", *to_commit])
         return False, f"배포 중단 — staged 목록 불일치: {sorted(staged_set)}"
-    c = _git(root, ["commit", "-q", "-m", f"deploy calculator {slug}"])
+    c = _git(root, ["commit", "-q", "-m", plan["commit_message"]])
     if c.returncode != 0:
         _git(root, ["reset", "-q", "--", *to_commit])
         return False, f"배포 중단 — git commit 실패: {c.stderr.strip()}"
@@ -243,7 +320,8 @@ def _origin_full_name(root: str) -> str | None:
     return f"{m.group(1)}/{m.group(2)}" if m else None
 
 
-def deploy_app(cfg: dict, files: dict, repo: str = None, subdir: str = "") -> tuple:
+def deploy_app(cfg: dict, files: dict, repo: str = None, subdir: str = "",
+               *, dry_run: bool = False) -> tuple:
     """files={'index.html':..,'style.css':..,'script.js':..} = _site/<subdir>/ 확정 스냅샷.
     반환: (ok, deploy_url 또는 메시지).
 
@@ -254,10 +332,33 @@ def deploy_app(cfg: dict, files: dict, repo: str = None, subdir: str = "") -> tu
     local HEAD == origin/master(분기/ahead 모두 거부)였고 그 사이 원격이 바뀌지
     않았을 때만 push한다. repo 인자는 호출부 호환용이며 배포 대상은 로컬 저장소의
     origin이다(저장소 생성/Pages 설정 변경 없음).
+
+    dry_run=True: 같은 검증만 수행하고 (False, plan dict)를 반환한다 — git add/
+    commit/push/fetch, HTTP 호출 없음. 배포가 일어나지 않았으므로 ok는 항상 False
+    ("if ok: publish" 호출부가 실수로 기록하지 않도록). 판정은 plan["deploy_allowed"],
+    사유는 plan["blocked_reason"]/plan["blockers"]를 본다.
     """
+    root = cfg.get("_root") or "."
+    if dry_run:
+        try:
+            plan = _plan_slug_deploy(root, subdir, files, dry_run=True)
+            plan.pop("_root", None)
+            full = _origin_full_name(root)
+            plan["deploy_url"] = get_deploy_url(cfg, full, subdir) if full else None
+            extra = ([] if is_configured(cfg) else ["GITHUB_TOKEN 미설정"]) + \
+                    ([] if full else ["origin이 GitHub 저장소가 아님"])
+            if extra:
+                plan["blockers"] += extra
+                plan["deploy_allowed"] = False
+                plan["blocked_reason"] = plan["blocked_reason"] or extra[0]
+        except Exception as e:
+            plan = {"status": "dry_run", "dry_run": True, "slug": subdir,
+                    "deploy_allowed": False, "blocked_reason": f"dry-run 실패: {e}",
+                    "blockers": [f"dry-run 실패: {e}"]}
+        return False, plan
+
     if not is_configured(cfg):
         return False, "GITHUB_TOKEN 미설정 — 배포 건너뜀(로컬 미리보기만 가능)"
-    root = cfg.get("_root") or "."
     try:
         # URL은 쓰기 전에 계산 — push 성공 후 URL 실패로 "실패" 보고되는 일이 없도록.
         full = _origin_full_name(root)
