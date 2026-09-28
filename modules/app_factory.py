@@ -104,8 +104,18 @@ def _chat(cfg, role, system, user, max_tokens=1200):
 
 
 def _category_to_af_yaml(category: str) -> str:
-    """category → _af yaml 파일명(확장자 제외). 미매핑 시 labor_af 폴백."""
-    return _CATEGORY_AF_YAML_MAP.get(str(category).strip(), "labor_af")
+    """category → _af yaml 파일명(확장자 제외). 미매핑 시 labor_af 폴백.
+
+    IRP-32: 폴백 자체는 그대로 유지하되(기존 동작 불변), 정식 category와
+    일치하지 않아 폴백이 발동한 경우 원본 category 값을 warning으로 남긴다
+    (IRP-30/31에서 확인된 조용한 오배치 재발을 관찰 가능하게 만드는 최소 조치)."""
+    mapped = _CATEGORY_AF_YAML_MAP.get(str(category).strip())
+    if mapped is None:
+        LOG.warning(
+            "Unmapped App Factory category %r; falling back to labor_af", category,
+        )
+        return "labor_af"
+    return mapped
 
 
 def _next_display_order() -> int:
