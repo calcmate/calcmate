@@ -1077,7 +1077,7 @@ def generate_app(cfg: dict, name: str, category: str = "", desc: str = "", tier:
 
     # [0] 기존 계산기 목록 로드 — 사전 중복 확인 + GPT 컨텍스트
     try:
-        existing = CalculatorRepository(get_db_adapter(cfg)).get_all()
+        existing = CalculatorRepository(get_calculator_storage_adapter(cfg)).get_all()
     except Exception:
         existing = []
 
@@ -1167,7 +1167,7 @@ def suggest_idea(cfg: dict, keyword: str = "") -> dict:
     """기존 계산기 목록을 참고해 AI가 새 계산기 아이디어(이름/카테고리/설명)를 제안.
     keyword가 주어지면 그 키워드를 중심으로 구체화, 없으면 자유 제안."""
     try:
-        existing = CalculatorRepository(get_db_adapter(cfg)).get_all()
+        existing = CalculatorRepository(get_calculator_storage_adapter(cfg)).get_all()
     except Exception:
         existing = []
     existing_summary = "\n".join(
@@ -1260,7 +1260,7 @@ def _write_calculator_index(cfg: dict) -> None:
     """slug ↔ 한글 name 매핑을 docs/calculator_index.json에 전량 재생성(개발 편의용 인덱스).
     ※ 순수 참조 문서 — 기존 로직(registry/파이프라인/UI)은 이 파일을 읽지 않는다.
        slug=내부식별자(폴더/URL), name=화면표시(한글)의 대응을 한눈에 보기 위한 것."""
-    repo = CalculatorRepository(get_db_adapter(cfg))
+    repo = CalculatorRepository(get_calculator_storage_adapter(cfg))
     idx = {}
     for c in repo.get_all():
         s = str(c.get("slug", "")).strip()
@@ -1720,9 +1720,15 @@ def save_app(cfg: dict, app: dict, site_id: str = "", slug: str = None) -> tuple
 
 
 def _save_app_locked(cfg: dict, app: dict, site_id: str = "", slug: str = None) -> tuple:
+    # STEP93: calculators는 get_calculator_storage_adapter(SQLite MAIN/Sheets BACKUP)로 전환.
+    # db(get_db_adapter, DualAdapter)는 이 함수 안에서 app_templates 고아 정리
+    # (db.delete("app_templates", ...))에만 계속 쓰인다 — app_templates 경로는
+    # 절대 변경하지 않는다(STEP93 §5/§7 보호 범위).
     db = get_db_adapter(cfg)
-    calc_repo = CalculatorRepository(db)
-    tpl_repo = TemplateRepository(db)
+    calc_repo = CalculatorRepository(get_calculator_storage_adapter(cfg))
+    # IRP-23: app_templates만 SQLite-원본/Sheets-백업(get_template_storage_adapter) 사용 —
+    # calc_repo(calculators)는 STEP93부터 get_calculator_storage_adapter를 쓴다.
+    tpl_repo = TemplateRepository(get_template_storage_adapter(cfg))
     name = app.get("name", "")
     new_slug = (slug or "").strip().lower() or _slug(name)   # 명시 영문 slug 우선, 없으면 기존 방식
     # ── CA-1B-4 P1-C: Mode B(Contract 기반) 전용 formula_status Hard-Gate ──
@@ -1900,10 +1906,14 @@ def delete_app(cfg: dict, slug: str) -> tuple[bool, str]:
     if entry_v3 is not None and entry_v3.get("source") != "app_factory":
         return False, f"'{slug}'은 App Factory 계산기가 아닙니다(source={entry_v3.get('source')!r}) — 삭제 거부"
 
+    # STEP93: calculators 조회/삭제는 get_calculator_storage_adapter(SQLite MAIN)로,
+    # app_templates 삭제(아래 db.delete("app_templates", tpl_id))는 기존 db(DualAdapter)
+    # 그대로 유지 — app_templates 경로는 변경하지 않는다(STEP93 §5/§7 보호 범위).
     db = get_db_adapter(cfg)
-    calc_repo = CalculatorRepository(db)
+    calc_db = get_calculator_storage_adapter(cfg)
+    calc_repo = CalculatorRepository(calc_db)
 
-    rows = db.get_where("calculators", {"slug": slug})
+    rows = calc_db.get_where("calculators", {"slug": slug})
     if not rows:
         return False, f"calculators에서 '{slug}' 조회 실패 — 이미 삭제됐거나 존재하지 않음"
 
