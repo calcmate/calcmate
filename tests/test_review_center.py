@@ -340,6 +340,93 @@ def test_pre_build_qa_date_based_skips_steps_345():
 
 
 # ─────────────────────────────────────────────────────────────
+# 4-1. IRP-27 — pre_build_qa Step 6 CODE_BASED_SLUGS 오탐 제거
+#
+# IRP-26 진단: CODE_BASED_SLUGS(실제 계산이 DB formula가 아니라 _compute_js()의
+# slug 조건부 분기로 수행되는 계산기)는 Step 6이 DB formula를 execute_formula()로
+# 직접 실행하려다 formula가 비어있으면(falsy) 오탐 FAIL, stale-but-실행가능한
+# formula가 남아있으면 틀린 값으로도 우연히 PASS — 어느 쪽도 실제 계산 정확성과
+# 무관했다. IRP-27에서 is_date_based와 동일한 방식으로 skip 처리했다.
+# ─────────────────────────────────────────────────────────────
+
+def test_a_code_based_slug_step6_skipped_not_executed():
+    """Test A — CODE_BASED_SLUGS 대상(자동차_취등록세_계산기, 실제 DB formula={})은
+    Step 6이 execute_formula()를 호출하지 않고 skip되어야 하며, 이 때문에
+    qa_ok=False가 되는 오탐이 발생하지 않아야 한다."""
+    from modules.config_loader import load_config
+    from modules.review_center import pre_build_qa, CODE_BASED_SLUGS
+    cfg = load_config()
+    assert "자동차_취등록세_계산기" in CODE_BASED_SLUGS, "이 테스트의 전제(allowlist 등록)가 깨짐"
+
+    car_calc = {
+        "slug": "자동차_취등록세_계산기",
+        "input_schema": {
+            "car_price": "number",
+            "car_type": "select:1=비영업승용,2=경차,3=영업용,4=승합·화물·특수,5=이륜차",
+            "eco_type": "select:0=일반,1=전기,2=수소",
+        },
+        "output_schema": {
+            "acquisition_tax": "number", "standard_acquisition_tax": "number",
+            "exemption_amount": "number",
+        },
+        "formula": "{}",   # 실제 DB 상태와 동일(코드 분기가 계산 권위, formula는 비어있음)
+    }
+    results = pre_build_qa(car_calc, cfg)
+    step6 = next(r for r in results if r["step"] == 6)
+    assert step6["skipped"] is True, f"CODE_BASED_SLUGS인데 Step 6이 skip되지 않음: {step6}"
+    assert step6["passed"] is True, f"skip된 Step 6은 passed=True여야 함: {step6}"
+    assert "execute_formula" not in step6["detail"], "Step 6 detail에 execute_formula 실행 흔적이 남음"
+    assert "계산 결과 이상" not in step6["detail"], (
+        f"IRP-26에서 확인된 옛 오탐('계산 결과 이상: {{}}')이 재발함: {step6}")
+
+    # qa_ok 전체가 아니라 "Step 6이 원인인 실패가 없는지"만 정확히 확인한다 —
+    # Step 10(FAQ/본문 금칙 문구)은 이 계산기의 실제 Registry forbidden_phrases와
+    # 관련된 별개 항목이라 IRP-27(Formula Gate 오탐 제거) 범위 밖이다.
+    other_failures = [r for r in results if r["step"] != 6 and not (r["passed"] or r["skipped"])]
+    if other_failures:
+        assert all(r["step"] != 6 for r in other_failures)
+
+
+def test_b_normal_formula_calculator_step6_still_executes():
+    """Test B — CODE_BASED_SLUGS에 없는 일반 formula 계산기는 기존처럼 Step 6이
+    execute_formula()를 실제로 호출해 검증해야 한다(skip되면 안 됨)."""
+    from modules.config_loader import load_config
+    from modules.review_center import pre_build_qa, CODE_BASED_SLUGS
+    cfg = load_config()
+    normal_calc = {
+        "slug": "test-normal-formula-calc",
+        "input_schema": {"a": {"type": "number"}, "b": {"type": "number"}},
+        "output_schema": {"total": {"label": "합계"}},
+        "formula": {"total": "a + b"},
+    }
+    assert normal_calc["slug"] not in CODE_BASED_SLUGS
+    results = pre_build_qa(normal_calc, cfg)
+    step6 = next(r for r in results if r["step"] == 6)
+    assert step6["skipped"] is False, f"일반 formula 계산기인데 Step 6이 skip됨: {step6}"
+    assert step6["passed"], f"정상 formula(a+b)인데 Step 6 실패: {step6}"
+    assert "계산 성공" in step6["detail"]
+
+
+def test_c_date_based_step6_skip_unaffected_by_irp27():
+    """Test C — 날짜형 계산기는 IRP-27 이후에도 기존과 동일하게 Step 6이 skip되어야
+    한다(is_date_based 조건은 변경하지 않음, OR로만 조건 추가됐으므로 회귀 없어야 함)."""
+    from modules.config_loader import load_config
+    from modules.review_center import pre_build_qa
+    cfg = load_config()
+    date_calc = {
+        "slug": "test-date",
+        "compute_type": "date_based",
+        "input_schema": {"start_date": {"type": "date"}},
+        "output_schema": {"end_date": {"label": "종료일"}},
+        "formula": "",
+    }
+    results = pre_build_qa(date_calc, cfg)
+    step6 = next(r for r in results if r["step"] == 6)
+    assert step6["skipped"] is True, f"날짜형 계산기의 Step 6 skip이 회귀됨: {step6}"
+    assert step6["passed"] is True
+
+
+# ─────────────────────────────────────────────────────────────
 # 5. promote_to_ready 체크리스트 검증
 # ─────────────────────────────────────────────────────────────
 

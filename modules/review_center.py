@@ -28,6 +28,95 @@ LEGAL_SIGNAL_KEYWORDS = [
     "요율", "세율", "보험료율", "상한", "하한", "연도별", "예외", "특례",
 ]
 
+# STEP 28-208: DB formula가 비어 있고 실제 계산이 modules/app_generator.py의 slug
+# 조건부 코드 분기로 구현된 App Factory 계산기 명시적 allowlist(추측 감지 방지,
+# STEP 28-207 설계 확정). formula가 falsy이고 이 집합에 있는 slug에 한해서만
+# formula_accuracy/rate_constant를 "코드 구현 존재" 기준으로 생성한다 — 그 외에는
+# 기존 "DB formula 존재" 기준 동작을 그대로 유지한다.
+CODE_BASED_SLUGS = frozenset({
+    "자동차_취등록세_계산기",
+    "연금저축_irp_세액공제_계산기",
+    # IRP-24: 신규 생성 계산기. Contract formula가 삼항 조건식(IfExp)을 포함해
+    # 안전식 평가기가 거부(_formula_valid=False) — 실제 계산은 위 IRP와 동일한
+    # slug 조건부 코드 분기(modules/app_generator.py)로 구현됨.
+    "irp-tax-credit-v2",
+})
+
+# STEP 28-208: 위 계산기들의 formula_accuracy/rate_constant display_value.
+# 실제 파일 경로/테스트 파일명/legal_master entity_id를 그대로 사용 — 추측 문구 없음.
+CODE_BASED_EVIDENCE = {
+    "자동차_취등록세_계산기": {
+        "formula_accuracy": (
+            "⚠️ DB formula 없음(formula={}) — 실제 계산 로직은 "
+            "modules/app_generator.py의 slug 조건부 분기(자동차_취등록세_계산기)에 구현됨. "
+            "검증: tests/test_step28_193_car_tax_compute.py(33개), "
+            "tests/test_car_tax_input_validation.py(8개) 전체 PASS."
+        ),
+        "rate_constant": (
+            "⚠️ DB formula 없음 — 코드 내 RATE_MAP={1:0.07,2:0.04,3:0.04,4:0.05,5:0.02}, "
+            "경차 감면 한도 750,000원, 친환경차 감면 한도 1,400,000원(modules/app_generator.py). "
+            "근거: legal_master local_tax_act_12, local_tax_special_act_67, "
+            "local_tax_special_act_66_4. 검증: tests/test_step28_193_car_tax_compute.py."
+        ),
+    },
+    # IRP-10/11: DB calculators.formula는 여전히 옛 공식(min(7000000, ...,
+    # 0.12*annual_income))이 남아 있으나(IRP-04에서 의도적으로 미변경 — DB 수정
+    # 금지 원칙), 실제 계산은 modules/app_generator.py의 slug 조건부 분기가
+    # 전담하며 이 옛 DB formula는 전혀 읽지 않는다. 아래 evidence는 그 실제
+    # 분기 코드(_compute_js(), 약 1066행)의 상수를 그대로 인용한다.
+    "연금저축_irp_세액공제_계산기": {
+        "formula_accuracy": (
+            "⚠️ DB calculators.formula는 옛 공식(min(7000000, pension_contribution + "
+            "irp_contribution, 0.12 * annual_income) 등)이 남아 있으나 공식 계산 근거가 "
+            "아님 — 실제 계산 로직은 modules/app_generator.py의 slug 조건부 분기"
+            "(연금저축_irp_세액공제_계산기)에 구현됨. "
+            "검증: tests/test_irp_tax_credit_compute.py(13개) 전체 PASS."
+        ),
+        "formula_cap": (
+            "⚠️ DB formula의 min(7000000, ..., 0.12*annual_income) cap은 실제 코드에 "
+            "존재하지 않음(IRP-02에서 법적 근거 없음 확정, IRP-04에서 제거됨) — 실제 상한은 "
+            "코드 내 PENSION_CAP=6,000,000(연금저축 인정액), TOTAL_CAP=9,000,000"
+            "(연금저축+IRP 합산 인정액)이며 소득 대비 비율 cap은 없음(modules/app_generator.py). "
+            "검증: tests/test_irp_tax_credit_compute.py."
+        ),
+        "rate_constant": (
+            "⚠️ DB formula 내 상수(0.12/0.15/0.12)는 옛 공식의 것으로 공식 근거가 아님 — "
+            "실제 코드 내 INCOME_THRESHOLD=55,000,000 기준 annual_income<=threshold면 "
+            "세율 0.15, 초과면 0.12(modules/app_generator.py). "
+            "근거: legal_master income_tax_act_137(연금계좌세액공제 서브항목, 소득세법 "
+            "제59조의3). 검증: tests/test_irp_tax_credit_compute.py."
+        ),
+    },
+    # IRP-24: Contract(build_contract) formula 원안은 삼항 조건식을 포함해 build_calculator()의
+    # Formula Hard Gate(안전식 평가기)가 거부했다(_formula_valid=False, "허용되지 않은 식:
+    # IfExp"). 원안에서 삼항식만 제거한 단순화(세율 0.12 고정) 근사식으로 DB
+    # calculators.formula를 정리했다 — 연금저축_irp_세액공제_계산기의 "옛 공식이 남아있으나
+    # 공식 계산 근거가 아님"과 동일한 성격(Hard Gate/QA 통과용 근사치일 뿐 실제 계산 근거
+    # 아님). 실제 계산은 modules/app_generator.py의 slug 조건부 분기(irp-tax-credit-v2)가
+    # 전담하며 조건부 세율(0.15/0.12)을 정확히 반영한다.
+    "irp-tax-credit-v2": {
+        "formula_accuracy": (
+            "⚠️ DB calculators.formula는 삼항식(조건부 세율)을 제거한 단순화 근사치"
+            "(세율 0.12 고정)일 뿐 공식 계산 근거가 아님 — 실제 계산 로직은 modules/"
+            "app_generator.py의 slug 조건부 분기(irp-tax-credit-v2)에 구현되어 있으며 "
+            "총급여 5,500만원 기준 0.15/0.12 조건부 세율을 정확히 반영함. "
+            "검증: tests/test_irp_tax_credit_v2_compute.py 전체 PASS."
+        ),
+        "formula_cap": (
+            "실제 상한은 코드 내 PENSION_ANNUAL_CAP=6,000,000(연금저축 인정액), "
+            "COMBINED_ANNUAL_CAP=9,000,000(연금저축+IRP 합산 인정액)이며 소득 대비 "
+            "비율 cap은 없음(modules/app_generator.py). "
+            "검증: tests/test_irp_tax_credit_v2_compute.py."
+        ),
+        "rate_constant": (
+            "코드 내 HIGH_INCOME_LINE=55,000,000 기준 annual_income<=threshold면 "
+            "세율 0.15, 초과면 0.12(modules/app_generator.py). "
+            "근거: legal_master income_tax_act_137(연금계좌세액공제 서브항목, 소득세법 "
+            "제59조의3). 검증: tests/test_irp_tax_credit_v2_compute.py."
+        ),
+    },
+}
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -65,22 +154,39 @@ def extract_checklist(app: dict, tier: str = "Tier2-A", category: str = "") -> l
     legal_refs = app.get("legal_refs") or []
     compute_rules = _pj(app.get("compute_rules"), {})
     input_schema = _pj(app.get("input_schema"), {})
+    slug = str(app.get("slug", ""))
 
     is_date_based = (app.get("compute_type") == "date_based" or tier == "Tier2-B")
+    # STEP 28-208: formula가 비어 있어도 CODE_BASED_SLUGS에 등록된 계산기는
+    # formula_accuracy/rate_constant를 코드 구현 근거로 생성한다.
+    # IRP-11: 이전에는 "formula가 비어 있을 때만" 코드 기반으로 인정했으나(자동차_
+    # 취등록세_계산기는 실제로 DB formula가 비어 있어 이 조건으로도 충분했음),
+    # IRP처럼 DB formula가 옛 값으로 남아있는(비어있지 않은) 코드 기반 계산기도
+    # 있으므로 "CODE_BASED_SLUGS 등록 여부"만으로 판정한다 — formula 존재 자체는
+    # 더 이상 code-based 판정을 막지 않는다(자동차_취등록세_계산기는 formula가
+    # 원래 비어 있으므로 이 변경으로 동작이 바뀌지 않음).
+    is_code_based = slug in CODE_BASED_SLUGS
 
     # D-2: 카테고리 기반 법적 근거 등급 결정
     legal_severity = "critical" if (not category or category in CRITICAL_CATEGORIES) else "advisory"
 
-    # ─ formula_accuracy: Tier2-A + formula 있는 경우
-    if formula and not is_date_based:
-        formula_str = (json.dumps(formula, ensure_ascii=False)
-                       if isinstance(formula, dict) else str(formula))
+    # ─ formula_accuracy: Tier2-A + formula 있는 경우 (STEP 28-208: 코드 기반
+    # 계산기는 formula가 비어 있어도 코드 구현 근거로 이 항목을 생성한다)
+    if (formula or is_code_based) and not is_date_based:
+        if is_code_based:
+            display_value = CODE_BASED_EVIDENCE[slug]["formula_accuracy"]
+            auto_source = "code_branch_field"
+        else:
+            formula_str = (json.dumps(formula, ensure_ascii=False)
+                           if isinstance(formula, dict) else str(formula))
+            display_value = formula_str[:400]
+            auto_source = "formula_field"
         items.append({
             "id": "formula_accuracy",
             "severity": "critical",
             "label": "계산 공식 정확성",
-            "display_value": formula_str[:400],
-            "auto_source": "formula_field",
+            "display_value": display_value,
+            "auto_source": auto_source,
             "checked": False, "checked_by": None, "checked_at": None,
         })
 
@@ -101,7 +207,22 @@ def extract_checklist(app: dict, tier: str = "Tier2-A", category: str = "") -> l
     })
 
     # ─ formula_cap: formula에 min()/max() cap 함수가 포함된 경우 (법정 상한/하한 유지 확인)
-    if formula and not is_date_based:
+    # IRP-11: 코드 기반 계산기는 DB formula의 stale cap이 아니라 CODE_BASED_EVIDENCE의
+    # "formula_cap" 근거를 사용한다(있는 경우에만 — 자동차_취등록세_계산기처럼 evidence에
+    # 이 키가 없으면 기존과 동일하게 항목 자체를 생성하지 않는다, 그 계산기는 formula도
+    # 비어 있어 애초에 이 블록 자체가 실행되지 않았던 것과 동일한 결과).
+    if is_code_based and not is_date_based:
+        cap_evidence = CODE_BASED_EVIDENCE.get(slug, {}).get("formula_cap")
+        if cap_evidence:
+            items.append({
+                "id": "formula_cap",
+                "severity": "critical",
+                "label": "공식 상한/하한(cap) 유지 확인",
+                "display_value": cap_evidence,
+                "auto_source": "code_branch_cap",
+                "checked": False, "checked_by": None, "checked_at": None,
+            })
+    elif formula and not is_date_based:
         formula_str_for_cap = (json.dumps(formula, ensure_ascii=False)
                                if isinstance(formula, dict) else str(formula))
         if re.search(r'\bmin\s*\(|\bmax\s*\(', formula_str_for_cap):
@@ -115,8 +236,18 @@ def extract_checklist(app: dict, tier: str = "Tier2-A", category: str = "") -> l
                 "checked": False, "checked_by": None, "checked_at": None,
             })
 
-    # ─ rate_constant: formula에 소수점 상수 포함 시
-    if formula and not is_date_based:
+    # ─ rate_constant: formula에 소수점 상수 포함 시 (STEP 28-208: 코드 기반
+    # 계산기는 formula 정규식 추출 대신 코드 내 상수를 근거로 생성한다)
+    if is_code_based and not is_date_based:
+        items.append({
+            "id": "rate_constant",
+            "severity": "critical",
+            "label": "적용 세율/계수 확인",
+            "display_value": CODE_BASED_EVIDENCE[slug]["rate_constant"],
+            "auto_source": "code_branch_constants",
+            "checked": False, "checked_by": None, "checked_at": None,
+        })
+    elif formula and not is_date_based:
         constants = re.findall(r'\b\d+\.\d+\b', str(formula))
         if constants:
             items.append({
@@ -128,14 +259,25 @@ def extract_checklist(app: dict, tier: str = "Tier2-A", category: str = "") -> l
                 "checked": False, "checked_by": None, "checked_at": None,
             })
 
-    # ─ base_year: 🔴 카테고리 계산기에만
+    # ─ base_year: 🔴 카테고리 계산기에만. IRP-09: compute_rules.tax_year가 있으면
+    # 실제 기준연도를 표시값에 반영한다(legal_master의 last_verified는 큐레이터
+    # 확인일일 뿐 세율 적용 연도가 아니므로 여기서 참조하지 않는다). 값이 있어도
+    # "checked"는 여전히 False — tax_year 존재는 메타데이터 존재를 의미할 뿐
+    # 운영자의 법령 검토 승인을 대신하지 않는다.
     if legal_severity == "critical":
+        tax_year = compute_rules.get("tax_year")
+        if tax_year:
+            disp_year = f"{tax_year}년 기준 — compute_rules.tax_year 선언됨(운영자 검토 필요)"
+            src_year = "tax_year_field"
+        else:
+            disp_year = "직접 확인 필요 — 법령 시행일 또는 세율 적용 연도"
+            src_year = "critical_category"
         items.append({
             "id": "base_year",
             "severity": "critical",
             "label": "기준 연도/시행일 확인",
-            "display_value": "직접 확인 필요 — 법령 시행일 또는 세율 적용 연도",
-            "auto_source": "critical_category",
+            "display_value": disp_year,
+            "auto_source": src_year,
             "checked": False, "checked_by": None, "checked_at": None,
         })
 
@@ -396,46 +538,42 @@ def check_slug_conflict(slug: str, cfg: dict) -> tuple[str, bool, str]:
 # 4. Build 사전 QA 6단계 (D-4 반영)
 # ─────────────────────────────────────────────────────────────
 
-def _extract_compute_result_fn(js: str) -> str:
-    """script.js 전체 번들(공통 컴포넌트는 document/window DOM에 의존)에서
-    순수 계산 로직인 window.computeResult 함수 블록만 중괄호 매칭으로 추출.
-    app_generator.generate_js()는 [DOM 의존 컴포넌트 + computeResult + CTA/FAQ 설정] 순서로
-    이어붙이므로, 전체를 그대로 실행하면 Node.js에 document가 없어 항상 실패한다."""
-    marker = "window.computeResult"
-    i = js.find(marker)
-    if i == -1:
-        return ""
-    brace_start = js.find("{", i)
-    if brace_start == -1:
-        return ""
-    depth = 0
-    j = brace_start
-    while j < len(js):
-        if js[j] == "{":
-            depth += 1
-        elif js[j] == "}":
-            depth -= 1
-            if depth == 0:
-                end = j + 1
-                if end < len(js) and js[end] == ";":
-                    end += 1
-                return js[i:end]
-        j += 1
-    return ""
-
-
 def _js_smoke_test(js_content: str, ins: dict, date_fields: list) -> tuple:
-    """실제 생성된 script.js에서 computeResult 함수만 추출해 Node.js로 실행,
+    """실제 생성된 script.js 전체 번들을 Node.js에서 그대로 실행해 window.computeResult()가
     예외 없이 반환하는지 확인. 반환값의 정확성(기대값 비교)은 검증하지 않음 —
     실행 가능 여부만 보는 스모크 테스트.
-    반환: (passed: bool|None, detail: str). passed=None이면 skip(환경상 실행 불가)."""
+    반환: (passed: bool|None, detail: str). passed=None이면 skip(환경상 실행 불가).
+
+    STEP 28-160/161: 이전에는 computeResult 함수 블록만 중괄호 매칭으로 잘라내
+    독립 실행했다(공통 컴포넌트는 document/window DOM에 의존하므로 전체를 그대로
+    실행하면 Node.js에 document가 없어 항상 실패한다는 이유). 하지만 STEP 28-140에서
+    BMI의 computeResult가 components.js 공유 helper pyRound()를 호출하게 되면서
+    이 전제가 깨졌다 — pyRound 정의(및 window.pyRound export)가 통째로 잘려나가
+    "ReferenceError: pyRound is not defined"가 발생했다. computeResult만 잘라내는
+    대신, tests/test_nan_infinity_guard.py::_run_compute_result()에서 이미 검증된
+    DOM/window 스텁으로 전체 번들(js_content)을 그대로 실행한다 — pyRound를 이
+    함수 안에 별도로 재구현하거나 stub으로 대체하지 않고, 실제 components.js가
+    그대로 로드되어 진짜 구현이 실행되게 한다."""
     import subprocess
     import tempfile
     import os as _os
 
-    fn_src = _extract_compute_result_fn(js_content)
-    if not fn_src:
-        return False, "script.js에서 computeResult 함수를 찾지 못함(추출 실패)"
+    dom_stub = (
+        "globalThis.window = globalThis;\n"
+        "globalThis.document = {\n"
+        "  getElementById: function () { return null; },\n"
+        "  querySelector: function () { return null; },\n"
+        "  querySelectorAll: function () { return []; },\n"
+        "  createElement: function () { return { classList: { add: function () {}, remove: function () {} }, style: {} }; },\n"
+        "  addEventListener: function () {},\n"
+        "  readyState: 'complete',\n"
+        "};\n"
+        "globalThis.addEventListener = function () {};\n"
+        "globalThis.requestAnimationFrame = function () {};\n"
+        "globalThis.localStorage = { getItem: function () { return null; }, setItem: function () {}, removeItem: function () {} };\n"
+        "globalThis.navigator = { userAgent: 'node-test' };\n"
+        "globalThis.location = { pathname: '/test', href: 'http://localhost/test' };\n"
+    )
 
     dummy = {}
     date_pool = ["2015-01-01", "2024-01-01"]
@@ -457,7 +595,7 @@ def _js_smoke_test(js_content: str, ins: dict, date_fields: list) -> tuple:
             dummy[k] = 1000
 
     harness = (
-        "globalThis.window = globalThis;\n" + fn_src + "\n"
+        dom_stub + "\n" + js_content + "\n"
         + f"var out = window.computeResult({json.dumps(dummy, ensure_ascii=False)});\n"
         + "process.stdout.write(JSON.stringify(out));\n"
     )
@@ -665,11 +803,22 @@ def pre_build_qa(calc: dict, cfg: dict, prev_files: dict = None) -> list[dict]:
     # is_date_based 계산기는 Step 3~5와 동일한 이유(실제 계산이 formula 필드가 아니라
     # _compute_js()의 하드코딩 JS로 수행됨)로 execute_formula() 재현이 애초에 맞지 않는
     # 검사임 — Step 3~5와 일관되게 skip 처리(기존 알려진 한계, Phase E에서 수정 범위 아님).
-    if is_date_based:
+    # IRP-27: CODE_BASED_SLUGS(실제 계산이 DB formula가 아니라 _compute_js()의 slug
+    # 조건부 분기로 수행되는 계산기)도 동일한 이유로 execute_formula() 재현이 맞지 않는
+    # 검사임(IRP-26 진단: DB formula가 비어있으면 falsy로 오탐 FAIL, 옛 stale formula가
+    # 남아있으면 틀린 값으로도 우연히 PASS — 어느 쪽도 실제 계산 정확성과 무관).
+    # 실제 계산 정확성은 slug 전용 pytest(예: tests/test_step28_193_car_tax_compute.py,
+    # tests/test_irp_tax_credit_v2_compute.py)가 별도로 검증한다.
+    if is_date_based or _slug in CODE_BASED_SLUGS:
+        _reason = ("날짜형 계산기 — 실제 계산은 하드코딩 JS(_compute_js)로 수행되어 "
+                   "formula 재현 검사가 맞지 않음(기존 알려진 한계, Step 3~5와 동일 사유로 skip)"
+                   if is_date_based else
+                   "CODE_BASED_SLUGS 계산기 — 실제 계산은 DB formula가 아니라 "
+                   "_compute_js()의 slug 조건부 분기로 수행되어 formula 재현 검사가 맞지 않음"
+                   "(IRP-26/27, 계산 정확성은 slug 전용 pytest가 별도 검증)")
         results.append({"step": 6, "label": "기본값 계산 실행",
                         "passed": True, "skipped": True,
-                        "detail": "날짜형 계산기 — 실제 계산은 하드코딩 JS(_compute_js)로 수행되어 "
-                                  "formula 재현 검사가 맞지 않음(기존 알려진 한계, Step 3~5와 동일 사유로 skip)"})
+                        "detail": _reason})
     else:
         try:
             from modules.formula_engine import execute_formula
