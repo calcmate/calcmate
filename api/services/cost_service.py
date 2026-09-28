@@ -105,7 +105,8 @@ def retry_pending_item(pid: str) -> dict:
 
     try:
         try:
-            cfg = load_config()
+            # 재발행은 publisher.publish()로 WP에 쓰므로 production WordPress를 명시한다.
+            cfg = load_config(wp_target="production")
             ok, msg = retry_queue.retry(cfg, pid)
             return {"ok": ok, "message": msg}
         except Exception as e:

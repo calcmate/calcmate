@@ -24,7 +24,9 @@ def _blog_cfg() -> dict:
     """기존 config를 로드하고 blog 라인 전용으로 scheduler_line만 표시한다.
     modules/scheduler.py는 cfg["scheduler_line"]=="blog"일 때 data/schedule/blog/*를
     사용한다 — 이 표시 방식 자체가 기존 엔진의 라인 격리 메커니즘이다."""
-    cfg = dict(load_config())
+    # run_once()가 이 cfg로 WP에 쓰므로 production WordPress를 명시한다
+    # (target 없는 load_config()는 로컬 WORDPRESS_URL=salarymate.test를 가리킨다).
+    cfg = dict(load_config(wp_target="production"))
     cfg["scheduler_line"] = "blog"
     return cfg
 

@@ -106,7 +106,8 @@ def _repo():
     from adapters.db.factory import get_db_adapter
     from repositories.article_repository import ArticleRepository
 
-    cfg = load_config()
+    # WP 수정/복원 경로가 이 cfg를 쓰므로 production WordPress를 명시한다.
+    cfg = load_config(wp_target="production")
     return ArticleRepository(get_db_adapter(cfg)), cfg
 
 
@@ -154,7 +155,7 @@ def trash_article(article_id: str, confirmation: str, actor_id: str, actor_role:
     if confirmation != "TRASH":
         raise ArticleValidationError('confirmation 값이 "TRASH"와 일치해야 합니다.')
 
-    cfg = load_config()
+    cfg = load_config(wp_target="production")
     check = publisher.get_post(cfg, wp_id)
     if not check.get("success"):
         record_audit_event(AuditEvent(
