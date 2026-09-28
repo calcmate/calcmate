@@ -1797,6 +1797,17 @@ def _save_app_locked(cfg: dict, app: dict, site_id: str = "", slug: str = None) 
     if _v3_has_slug:
         return False, f"중복 슬러그: '{new_slug}' 이미 v3 Registry에 존재"
 
+    # ── STEP42: input_schema/output_schema 값 검증(Hard Gate) ──────────────
+    # STEP41에서 확인된 공백 보완 — validate_formula()는 변수명(키)만 검증하고
+    # 값(타입 선언)은 검증하지 않아, GPT 응답에 숫자 리터럴(0 등)이 들어가도
+    # 그대로 저장됐다(bmi-calculator, 연금저축_irp_세액공제_계산기). GPT 재호출은
+    # 하지 않는다 — 잘못된 spec을 저장하지 않는 것이 유일한 목적이다.
+    from .formula_engine import validate_calculator_schema
+    _schema_ok, _schema_msg = validate_calculator_schema(
+        app.get("input_schema", {}), app.get("output_schema", {}))
+    if not _schema_ok:
+        return False, f"🔒 스키마 검증 실패 — 저장하지 않음: {_schema_msg}"
+
     try:
         # 템플릿 먼저 저장 → template_id 확보
         tpl_id = tpl_repo.save({

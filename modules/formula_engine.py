@@ -144,6 +144,103 @@ def validate_formula(formula, inputs_schema=None, slug: str | None = None) -> tu
         return False, str(e)
 
 
+# ── STEP42: input_schema/output_schema "값" 검증 ──────────────────────────
+# STEP41에서 확인된 공백: validate_formula()는 formula가 참조하는 변수명이
+# input_schema의 '키'에 있는지만 확인하고, 그 '값'(타입 선언)이 실제로 유효한
+# 표현인지는 전혀 검증하지 않았다. 그 결과 App Factory가 GPT 응답을 그대로
+# 저장하는 경로에서 값 자리에 숫자 리터럴(예: 0, 0.0)이 들어가도 아무 제지 없이
+# calculators 테이블에 저장됐다(bmi-calculator, 연금저축_irp_세액공제_계산기).
+#
+# 아래 허용 어휘는 새로 만든 것이 아니라 STEP42 §3에서 현재 SQLite 19개
+# calculators 행 전수 조사로 실제 사용 중인 값만 추출해 확정했다:
+#   평탄형(문자열): "number" | "integer" | "boolean" | "date" | "select:키=라벨,..."
+#   dict형(Tier2-B류, military-discharge-date 실측):
+#     입력  {"type": <위 스칼라 중 하나 또는 "select">, "label": str, ["options": list]}
+#     출력  {"label": str}  (출력 dict 항목엔 "type"이 아예 없는 것이 현재 정상 형태)
+_SCALAR_TYPES = {"number", "integer", "boolean", "date"}
+_SELECT_PREFIX = "select:"
+
+
+def _is_valid_select_string(value: str) -> bool:
+    """"select:1=매매·교환,2=전세·월세" 형태(콤마로 구분된 key=label 쌍)인지 확인."""
+    body = value[len(_SELECT_PREFIX):]
+    if not body:
+        return False
+    for pair in body.split(","):
+        if "=" not in pair:
+            return False
+        key, label = pair.split("=", 1)
+        if not key.strip() or not label.strip():
+            return False
+    return True
+
+
+def _is_valid_scalar_value(value) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    if value in _SCALAR_TYPES:
+        return True
+    if value.startswith(_SELECT_PREFIX):
+        return _is_valid_select_string(value)
+    return False
+
+
+def _is_valid_dict_entry(value: dict, require_type: bool) -> bool:
+    label = value.get("label")
+    if not isinstance(label, str) or not label.strip():
+        return False
+    t = value.get("type")
+    if t is None:
+        return not require_type
+    if not isinstance(t, str) or (t not in _SCALAR_TYPES and t != "select"):
+        return False
+    if t == "select":
+        options = value.get("options")
+        if not isinstance(options, list) or not options:
+            return False
+    return True
+
+
+def _validate_schema_dict(schema, label: str, dict_requires_type: bool) -> tuple:
+    if not isinstance(schema, dict) or not schema:
+        return False, f"{label}이 비어있거나 dict 형태가 아님: {schema!r}"
+    for field_name, value in schema.items():
+        if isinstance(value, dict):
+            if not _is_valid_dict_entry(value, require_type=dict_requires_type):
+                return False, f"{label}.{field_name}: 지원되지 않는 dict 구조({value!r})"
+        elif not _is_valid_scalar_value(value):
+            return False, (
+                f"{label}.{field_name}: 지원되지 않는 값({value!r}) — "
+                f"허용값은 {sorted(_SCALAR_TYPES)} 중 하나, 'select:키=라벨,...' 형태, "
+                f"또는 {{'type':..., 'label':...}} dict 형태여야 함"
+            )
+    return True, "OK"
+
+
+def validate_calculator_schema(input_schema, output_schema) -> tuple:
+    """input_schema/output_schema의 각 '값'이 실제로 지원되는 형태인지 검증한다.
+    (ok, message) 반환. GPT 재호출 없음 — 저장을 막는 것이 유일한 목적이며
+    원본 spec dict는 변경하지 않는다(정규화/자동 수정 없음).
+
+    input_schema는 dict 항목에 "type"이 필수(military-discharge-date류),
+    output_schema는 dict 항목에 "type"이 없어도 된다(실측: label만 존재)."""
+    if isinstance(input_schema, str):
+        try:
+            input_schema = json.loads(input_schema) if input_schema else {}
+        except Exception:
+            return False, f"input_schema JSON 파싱 실패: {input_schema!r}"
+    if isinstance(output_schema, str):
+        try:
+            output_schema = json.loads(output_schema) if output_schema else {}
+        except Exception:
+            return False, f"output_schema JSON 파싱 실패: {output_schema!r}"
+
+    ok, msg = _validate_schema_dict(input_schema, "input_schema", dict_requires_type=True)
+    if not ok:
+        return ok, msg
+    return _validate_schema_dict(output_schema, "output_schema", dict_requires_type=False)
+
+
 def validate_compute_handler(slug: str) -> tuple:
     """CUSTOM_COMPUTE_SLUGS의 _compute_js 핸들러 존재 및 정상 생성 확인."""
     try:
