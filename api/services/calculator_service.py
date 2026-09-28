@@ -293,7 +293,22 @@ def submit_calculator_generation(
         if not ok:
             raise RuntimeError(msg)
         resolved_slug = (slug or "").strip().lower() or app_factory._slug(name)
-        return {"slug": resolved_slug, "name": name, "message": msg}
+
+        # 저장 직후 기존 build_calculator()로 _site/{slug}/ 스냅샷까지 자동 생성한다.
+        # 계산기는 이미 DB/Registry에 저장됐으므로 Build 결과와 무관하게 Job은
+        # succeeded로 두고 result["build"]에만 기록한다(실패를 Job failed로 올리면
+        # 재생성 시도 → 중복 slug 차단). 재시도/rollback/정리는 하지 않는다.
+        # Human Approval과 Deploy는 여기서 호출하지 않는다(사람이 별도로 수행).
+        try:
+            b = build_calculator(resolved_slug)
+            build = {"ok": bool(b.get("ok")), "stage": b.get("stage"),
+                     "message": b.get("message"), "snapshot_dir": b.get("snapshot_dir")}
+        except CalculatorNotFound as e:
+            build = {"ok": False, "stage": "registry",
+                     "message": f"Build 대상 조회 실패(v3 Registry/DB): {e}", "snapshot_dir": None}
+        build_note = "🧮 Build 완료" if build["ok"] else f"🧮 Build 미완료({build['stage']})"
+        return {"slug": resolved_slug, "name": name, "message": f"{msg} | {build_note}",
+                "build": build}
 
     store = get_job_store()
     accepted, message, job_id = store.submit(name, _target)
