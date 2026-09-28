@@ -11,6 +11,7 @@ gspread/Drive 직접 호출 없음.
 """
 import json
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -30,7 +31,7 @@ _CATEGORY_AF_YAML_MAP: dict[str, str] = {
     "병역/공무": "defense_af",
 }
 
-from adapters.db.factory import get_db_adapter
+from adapters.db.factory import get_db_adapter, get_template_storage_adapter, get_calculator_storage_adapter
 from repositories.calculator_repository import CalculatorRepository
 from repositories.template_repository import TemplateRepository
 from .ai_roles import make_provider
@@ -1694,10 +1695,31 @@ def contract_instance_restore(slug: str) -> dict:
     }
 
 
+# ── STEP 4-H-4 P1: save_app() 동시 실행 직렬화 ──────────────────────────
+# save_app()은 "중복 확인(read) → DB/Registry 기록(write)" 구간에 락이 없어
+# 동시에 같은/다른 slug로 두 요청이 들어오면 (a) 동일 slug가 DB에 중복 저장되고
+# (b) v3 Registry(_af.yaml)는 전체 파일을 매번 다시 써서(부분 병합이 아님)
+# 나중에 쓴 쪽이 먼저 쓴 쪽의 엔트리를 통째로 덮어써 조용히 유실시킬 수 있음이
+# STEP 4-H-4에서 실제로(threading + barrier) 재현됨. 이 프로젝트는 현재
+# uvicorn을 단일 프로세스로만 구동하므로(.claude/launch.json, --workers 미지정)
+# 프로세스 간 락은 불필요하고 프로세스 내부 Lock으로 충분하다고 판단했다
+# (FastAPI의 동기 라우트는 스레드풀에서 실행되므로 같은 프로세스 안에서도
+# 실제 스레드 동시 실행이 가능해 in-process Lock이 여전히 필요함).
+# 기존 로직은 전혀 바꾸지 않고 함수 전체를 이 락으로 감싸기만 한다.
+_SAVE_APP_LOCK = threading.Lock()
+
+
 def save_app(cfg: dict, app: dict, site_id: str = "", slug: str = None) -> tuple:
     """생성 결과를 calculators + app_templates 시트에 저장(Repository 경유).
     slug: 신규 계산기의 영문 식별자(폴더/URL/내부참조). 미지정 시 _slug(name)로 폴백(하위호환).
-    ※ 기존 계산기 slug는 절대 변경하지 않음 — 이 함수는 '신규 저장' 경로에만 관여."""
+    ※ 기존 계산기 slug는 절대 변경하지 않음 — 이 함수는 '신규 저장' 경로에만 관여.
+    동시 호출은 _SAVE_APP_LOCK으로 직렬화된다(STEP 4-H-4) — 실제 저장 로직은
+    _save_app_locked()에 그대로 있으며 여기서는 변경하지 않았다."""
+    with _SAVE_APP_LOCK:
+        return _save_app_locked(cfg, app, site_id=site_id, slug=slug)
+
+
+def _save_app_locked(cfg: dict, app: dict, site_id: str = "", slug: str = None) -> tuple:
     db = get_db_adapter(cfg)
     calc_repo = CalculatorRepository(db)
     tpl_repo = TemplateRepository(db)
@@ -1720,20 +1742,54 @@ def save_app(cfg: dict, app: dict, site_id: str = "", slug: str = None) -> tuple
             return False, f"🔒 {_fs_msg} (현재 상태: {_fs})"
     try:
         _all = calc_repo.get_all()
-        # 중복 체크(이름)
-        if any(str(c.get("name", "")).strip().lower() == name.lower() for c in _all):
-            return False, f"중복 계산기명: '{name}' 이미 등록됨"
-        # 중복 체크(slug) — DB + v3 Registry 모두 확인(기존 8개 포함)
-        if any(str(c.get("slug", "")).strip().lower() == new_slug for c in _all):
-            return False, f"중복 슬러그: '{new_slug}' 이미 등록됨 (DB)"
     except Exception as e:
         return False, f"기존 계산기 조회 실패(시트 권한 확인): {e}"
+
     try:
         from .registry_loader import load_registry_v3
-        if new_slug in load_registry_v3(force=True):
-            return False, f"중복 슬러그: '{new_slug}' 이미 v3 Registry에 존재"
+        _v3_has_slug = new_slug in load_registry_v3(force=True)
     except Exception:
-        pass
+        _v3_has_slug = None  # Registry 조회 실패 — 판단 불가(고아 자동 정리 비활성, 기존 동작과 동일)
+
+    _existing_by_slug = next(
+        (c for c in _all if str(c.get("slug", "")).strip().lower() == new_slug), None)
+
+    # ── STEP 4-H-3 P0: 고아 레코드(DB에만 존재) 자동 정리 ──────────────────
+    # 이전 save_app() 호출이 DB 저장(calculators/app_templates)까지는 성공했지만
+    # v3 Registry 기록([Step B])에서 실패하면, 계산기는 DB에만 남고 v3 Registry/
+    # registry_auto에는 없어 계산기 관리 화면·FastAPI 어디에도 보이지 않는 "고아"
+    # 상태가 된다. 이 상태에서는 동일 slug로 재시도해도 아래 "이미 등록됨(DB)"에
+    # 막혀 영구히 복구 불가능했다(STEP 4-H-3 진단에서 발견 — P0). v3 Registry에
+    # 실제로 없음이 확인된 경우에만(_v3_has_slug is False — 조회 자체가 실패한
+    # None은 제외해 오탐/오삭제 방지) delete_app()과 동일한 정리 대상(calculators/
+    # app_templates/registry_auto)을 제거하고 정상적으로 재시도를 진행한다.
+    if _existing_by_slug is not None and _v3_has_slug is False:
+        try:
+            _orphan_tpl_id = _existing_by_slug.get("template_id")
+            if _orphan_tpl_id:
+                db.delete("app_templates", _orphan_tpl_id)
+            calc_repo.delete(_existing_by_slug.get("id"))
+            try:
+                from .registry_loader import remove_auto_entry
+                remove_auto_entry(new_slug)
+            except Exception:
+                pass
+            LOG.warning("고아 레코드 자동 정리 완료(이전 Registry 기록 실패분으로 추정): slug=%s", new_slug)
+        except Exception as _cleanup_e:
+            return False, (
+                f"'{new_slug}'는 DB에만 존재하는 고아 레코드로 추정되나 자동 정리에 실패했습니다: "
+                f"{_cleanup_e} — 수동 확인 필요"
+            )
+        _all = [c for c in _all if c.get("id") != _existing_by_slug.get("id")]
+
+    # 중복 체크(이름)
+    if any(str(c.get("name", "")).strip().lower() == name.lower() for c in _all):
+        return False, f"중복 계산기명: '{name}' 이미 등록됨"
+    # 중복 체크(slug) — DB + v3 Registry 모두 확인(기존 8개 포함)
+    if any(str(c.get("slug", "")).strip().lower() == new_slug for c in _all):
+        return False, f"중복 슬러그: '{new_slug}' 이미 등록됨 (DB)"
+    if _v3_has_slug:
+        return False, f"중복 슬러그: '{new_slug}' 이미 v3 Registry에 존재"
 
     try:
         # 템플릿 먼저 저장 → template_id 확보
@@ -1806,7 +1862,30 @@ def save_app(cfg: dict, app: dict, site_id: str = "", slug: str = None) -> tuple
             save_af_checklist(new_slug, _checklist)
             LOG.info("검토 체크리스트 저장 완료: %s (%d 항목)", new_slug, len(_checklist))
         except Exception as _ce:
-            LOG.warning("체크리스트 저장 실패(무시): %s", _ce)
+            # ── STEP 4-H-3 P0: 체크리스트 폴백 — Legal Hold 우회 방지 ──────────
+            # promote_to_ready()는 review_checklist가 비어 있으면(`if checklist:`)
+            # critical 미완료 검사 자체를 건너뛴다 — 즉 이 예외를 그냥 삼키면
+            # (기존 동작) checklist가 아예 기록되지 않아 이후 아무 검증 없이
+            # READY 승격이 가능해진다(STEP 4-H-3 진단에서 발견 — P0). checklist
+            # 구조/판정 로직(promote_to_ready)은 건드리지 않고, 그 로직이 이미
+            # 전제하는 "critical 미체크 항목이 있으면 차단" 규칙이 항상 성립하도록
+            # 폴백 항목 하나를 대신 기록해 승격을 계속 차단한다.
+            LOG.warning("체크리스트 자동 추출/저장 실패 — 승인 차단용 폴백 항목 기록: %s", _ce)
+            try:
+                _fallback_checklist = [{
+                    "id": "checklist_generation_failed",
+                    "severity": "critical",
+                    "label": "체크리스트 자동 생성 실패 — 수동 검토 필요",
+                    "display_value": f"자동 추출/저장 중 오류 발생: {_ce}",
+                    "auto_source": "fallback_on_error",
+                    "checked": False, "checked_by": None, "checked_at": None,
+                }]
+                save_af_checklist(new_slug, _fallback_checklist)
+            except Exception as _ce2:
+                LOG.error(
+                    "폴백 체크리스트 저장도 실패 — READY 전환 시 Legal Hold 검증이 우회될 수 있음. "
+                    "수동 확인 필요: slug=%s, error=%s", new_slug, _ce2,
+                )
     return True, _msg
 
 

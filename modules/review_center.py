@@ -975,3 +975,190 @@ def content_quality_qa(calc: dict, html: str, js: str = "", contract: dict = Non
                     "passed": p4, "skipped": d4.startswith("skipped"), "detail": d4})
 
     return results
+
+
+# ══════════════════════════════════════════════════════════════════
+# P0-1 — HTML/JS 생성 완결성 검증 가드
+#
+# 배경: React Dashboard 실제 수동 생성 E2E(STEP 참고)에서 app_factory.
+# generate_app()의 "code"(HTML) 단계가 _chat(...,"code",...,max_tokens=4000)
+# 토큰 한도 부근에서 응답이 잘려, 미종료 template literal이 남은 채로
+# save_app()까지 그대로 저장된 사례가 실측 확인됐다(연금저축·IRP 세액공제
+# 계산기, 자동차 취등록세 계산기 — 둘 다 </html> 없이 <script> 중간에서
+# 끊김). 이 함수는 pre_build_qa()(계산기 관리 탭의 app_generator 템플릿
+# HTML을 검사하는 기존 10단계 QA)와는 **다른 대상**을 검사한다 — 여기서
+# 검사하는 것은 generate_app()이 만든 raw AI HTML(app_templates.
+# html_template에 저장될 원본)이며, app_generator.generate_calculator()가
+# formula/schema로부터 별도로 다시 만드는 배포용 HTML이 아니다. 두 HTML을
+# 같은 것으로 취급하지 않는다(코드 추적으로 확인된 사실).
+#
+# pre_build_qa()의 6단계 이하 구조(step/label/passed/skipped/detail)를
+# 그대로 재사용해 반환 형식을 통일한다 — 새 QA 계층을 만들지 않는다.
+# ══════════════════════════════════════════════════════════════════
+
+_NON_JS_SCRIPT_TYPES = (
+    "application/ld+json", "application/json", "text/template",
+    "text/x-handlebars-template", "text/html",
+)
+
+
+def _extract_script_blocks(html: str) -> tuple[list[str], bool]:
+    """<script>...</script> 블록 중 실제 JavaScript인 것만 내용 추출(문법검증 대상).
+    반환: (JS 블록 리스트, 태그_균형_여부).
+
+    태그_균형(opens==closes)은 <script type="application/ld+json"> 같은 비-JS
+    블록도 포함해 전체 <script> 태그 자체가 구조적으로 안 끊겼는지를 본다
+    (실제 배포된 계산기(app_generator 산출물)는 JSON-LD 구조화 데이터 +
+    외부 스크립트(src=)를 함께 쓰므로 이를 감안하지 않으면 오탐이 발생함 —
+    실측: annual-leave-remaining의 <script type="application/ld+json"> 3개를
+    JS 문법검사에 그대로 합치면 "Unexpected token ':'"로 거짓 FAIL됨).
+    JS 문법 검증 대상(블록 리스트)에서는 다음을 제외한다:
+      - type이 application/ld+json 등 비-JS인 블록(내용이 JSON이라 문법이 다름)
+      - src=가 있는 외부 스크립트(인라인 내용이 없어 검사 대상 아님)."""
+    open_tags = re.findall(r"<script(\s[^>]*)?>", html, flags=re.IGNORECASE)
+    closes = len(re.findall(r"</script\s*>", html, flags=re.IGNORECASE))
+    balanced = (len(open_tags) == closes)
+
+    js_blocks = []
+    for m in re.finditer(r"<script(\s[^>]*)?>(.*?)</script\s*>", html,
+                         flags=re.IGNORECASE | re.DOTALL):
+        attrs, content = m.group(1) or "", m.group(2)
+        type_match = re.search(r'type\s*=\s*["\']([^"\']+)["\']', attrs, flags=re.IGNORECASE)
+        script_type = (type_match.group(1).strip().lower() if type_match else "")
+        has_src = bool(re.search(r'\bsrc\s*=', attrs, flags=re.IGNORECASE))
+        if has_src:
+            continue  # 외부 스크립트 — 인라인 내용 없음, 검사 대상 아님
+        if script_type in _NON_JS_SCRIPT_TYPES:
+            continue  # JSON-LD 등 비-JS 블록 — JS 문법검사 대상 아님
+        js_blocks.append(content)
+    return js_blocks, balanced
+
+
+def _check_js_syntax(js: str) -> tuple[bool, bool, str]:
+    """node --check로 JS 문법 검증. 반환: (passed, skipped, detail).
+    Node 미존재 환경에서는 skip 처리(무거운 신규 의존성 추가 대신 기존
+    환경의 node를 그대로 사용 — 프로젝트 .venv/frontend가 이미 Node 필요)."""
+    import shutil
+    import subprocess
+    import tempfile
+
+    node_path = shutil.which("node")
+    if not node_path:
+        return True, True, "Node.js 미발견 — JS 문법 검증 건너뜀(구조 검사만 적용)"
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".js", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(js)
+            tmp_path = f.name
+        result = subprocess.run(
+            [node_path, "--check", tmp_path],
+            capture_output=True, text=True, timeout=10,
+            encoding="utf-8", errors="replace",
+        )
+        if result.returncode == 0:
+            return True, False, "✅ JS 문법 검증 통과(node --check)"
+        err_lines = (result.stderr or "").strip().splitlines()
+        # node --check의 실제 오류 원인은 "SyntaxError:"/"...Error:" 줄에 있고,
+        # stderr 마지막 줄은 버전 배너("Node.js vX.Y.Z")일 뿐이라 마지막 줄을
+        # 그대로 쓰면 안 된다 — Error 줄을 찾아 우선 사용한다.
+        reason = next((l.strip() for l in err_lines if "Error" in l), None)
+        if not reason:
+            reason = err_lines[-1] if err_lines else "알 수 없는 문법 오류"
+        # unterminated template literal은 대개 "Unexpected end of input"으로 표면화됨
+        return False, False, f"❌ JS 문법 오류(node --check): {reason}"
+    except Exception as e:
+        return True, True, f"JS 문법 검증 실행 실패(구조 검사만 적용): {e}"
+    finally:
+        try:
+            import os
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+
+def validate_html_js_completeness(html: str) -> tuple[bool, str, list[dict]]:
+    """generate_app()이 만든 raw HTML이 저장 가능한 수준으로 완결됐는지 검사.
+    save_app() 호출 이전에 실행되어야 하는 게이트(호출측 책임 — 이 함수 자체는
+    아무것도 차단하지 않고 결과만 반환한다).
+
+    반환: (ok, message, steps) — steps는 pre_build_qa()와 동일한
+    {"step","label","passed","skipped","detail"} 리스트.
+    ok=False면 호출측이 save_app()을 호출하지 않아야 한다.
+    """
+    steps: list[dict] = []
+    html = html or ""
+
+    # Step 1: 비어있지 않음
+    p1 = bool(html.strip())
+    steps.append({"step": 1, "label": "HTML 비어있지 않음", "passed": p1, "skipped": False,
+                 "detail": f"길이 {len(html)}자" if p1 else "HTML이 비어 있음"})
+    if not p1:
+        for s, l in [(2, "<html> 루트 태그 존재"), (3, "</html> 닫힘 존재"),
+                     (4, "<script>/</script> 태그 균형"), (5, "미종료 template literal/문자열 없음"),
+                     (6, "계산기 핵심 구조(입력/버튼) 존재"), (7, "JS 문법 검증")]:
+            steps.append({"step": s, "label": l, "passed": False, "skipped": True,
+                         "detail": "Step 1 실패로 건너뜀"})
+        return False, "HTML이 비어 있음", steps
+
+    # Step 2: <html> 루트 태그
+    p2 = bool(re.search(r"<html(\s|>)", html, flags=re.IGNORECASE))
+    steps.append({"step": 2, "label": "<html> 루트 태그 존재", "passed": p2, "skipped": False,
+                 "detail": "✅ 발견" if p2 else "❌ <html> 태그를 찾을 수 없음"})
+
+    # Step 3: </html> 닫힘 — 문자열 끝부분에 존재해야 함(중간에서 잘린 경우 탐지)
+    tail = html.rstrip()[-200:].lower()
+    p3 = "</html>" in tail
+    steps.append({"step": 3, "label": "</html> 닫힘 존재", "passed": p3, "skipped": False,
+                 "detail": "✅ 문서 끝에서 발견" if p3 else
+                           "❌ </html>이 문서 끝부분에 없음 — 응답이 중간에서 잘렸을 가능성"})
+
+    # Step 4: <script>/</script> 태그 균형
+    blocks, balanced = _extract_script_blocks(html)
+    p4 = balanced and len(blocks) >= 1
+    steps.append({"step": 4, "label": "<script>/</script> 태그 균형", "passed": p4, "skipped": False,
+                 "detail": (f"✅ script 블록 {len(blocks)}개, 태그 균형 정상" if p4 else
+                           "❌ <script>/</script> 개수 불일치 또는 script 블록 없음"
+                           " — 미종료 스크립트 블록 의심")})
+
+    # Step 5: 미종료 template literal/문자열(백틱 짝수 개 — 휴리스틱, Step 7이 최종 판정)
+    if blocks:
+        joined_js = "\n".join(blocks)
+        backtick_count = joined_js.count("`")
+        p5 = (backtick_count % 2 == 0)
+        steps.append({"step": 5, "label": "미종료 template literal 없음(휴리스틱)",
+                     "passed": p5, "skipped": False,
+                     "detail": (f"✅ 백틱 {backtick_count}개(짝수)" if p5 else
+                               f"❌ 백틱 {backtick_count}개(홀수) — template literal이 닫히지 않았을 가능성")})
+    else:
+        joined_js = ""
+        steps.append({"step": 5, "label": "미종료 template literal 없음(휴리스틱)",
+                     "passed": False, "skipped": True,
+                     "detail": "Step 4 실패(script 블록 추출 불가)로 건너뜀"})
+
+    # Step 6: 계산기 핵심 구조 — 입력 필드 + 버튼(generate_app() sys2 프롬프트가
+    # 항상 "입력폼+계산버튼+결과영역"을 요구하므로 이 구조는 정상 생성물의 불변 조건)
+    has_input = bool(re.search(r"<input\b", html, flags=re.IGNORECASE))
+    has_button = bool(re.search(r"<button\b", html, flags=re.IGNORECASE))
+    p6 = has_input and has_button
+    steps.append({"step": 6, "label": "계산기 핵심 구조(입력/버튼) 존재", "passed": p6, "skipped": False,
+                 "detail": (f"✅ input {'있음' if has_input else '없음'}, button {'있음' if has_button else '없음'}"
+                           if p6 else
+                           f"❌ input {'있음' if has_input else '없음'}, button {'있음' if has_button else '없음'}"
+                           " — 계산기 필수 요소 누락")})
+
+    # Step 7: JS 문법 검증(node --check) — script 추출 성공한 경우만 시도
+    if blocks and balanced:
+        p7, skipped7, d7 = _check_js_syntax(joined_js)
+    else:
+        p7, skipped7, d7 = False, False, "Step 4 실패(script 블록 추출 불가)로 실행 불가 — FAIL 처리"
+    steps.append({"step": 7, "label": "JS 문법 검증(node --check)",
+                 "passed": p7, "skipped": skipped7, "detail": d7})
+
+    ok = all(s["passed"] or s["skipped"] for s in steps)
+    if ok:
+        message = "✅ HTML/JS 완결성 검증 통과"
+    else:
+        failed_labels = [s["label"] for s in steps if not s["passed"] and not s["skipped"]]
+        message = "HTML/JS 완결성 검증 실패: " + "; ".join(failed_labels)
+    return ok, message, steps
