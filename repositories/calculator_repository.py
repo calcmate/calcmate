@@ -6,6 +6,12 @@ from datetime import datetime
 from adapters.db.base import AbstractDBAdapter
 
 
+class DuplicateCalculatorIdError(Exception):
+    """save() 호출 시 동일 id row가 DB에 이미 2건 이상 존재해 안전하게
+    update로 라우팅할 수 없는 상태. 임의로 한쪽을 골라 덮어쓰거나 삭제하지
+    않고 명시적으로 실패시킨다(중복 정리는 별도 절차로 선행되어야 함)."""
+
+
 class CalculatorRepository:
     TABLE = "calculators"
 
@@ -32,6 +38,23 @@ class CalculatorRepository:
         return bool(row) and str(row.get("status", "")).strip().lower() == "active"
 
     def save(self, calc: dict) -> str:
+        """id가 이미 지정돼 있고 그 id로 DB에 기존 row가 있으면 UPDATE로
+        라우팅한다(기존엔 무조건 INSERT라 동일 id가 중복 생성됐음 — 이 STEP에서 수정).
+        동일 id가 2건 이상(비정상 중복) 존재하면 어느 쪽을 update할지 임의로
+        고르지 않고 DuplicateCalculatorIdError를 던져 안전하게 실패한다."""
+        existing_id = calc.get("id")
+        if existing_id:
+            matches = self._db.get_where(self.TABLE, {"id": existing_id})
+            if len(matches) > 1:
+                raise DuplicateCalculatorIdError(
+                    f"id={existing_id!r}가 이미 {len(matches)}건 중복 존재 — "
+                    "save()가 임의로 하나를 골라 덮어쓰지 않도록 중단합니다. "
+                    "중복을 먼저 정리한 뒤 다시 시도하세요."
+                )
+            if len(matches) == 1:
+                data = {k: v for k, v in calc.items() if k != "id"}
+                self.update(existing_id, data)
+                return existing_id
         if not calc.get("id"):
             calc["id"] = "calc_" + datetime.now().strftime("%Y%m%d%H%M%S") + "_" + uuid.uuid4().hex[:4]
         calc.setdefault("status", "draft")
