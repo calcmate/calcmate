@@ -11,6 +11,9 @@ import {
   getPublishingPolicy,
   patchPublishingPolicy,
   getCurrentUser,
+  getTopicPool,
+  createOneoffReservation,
+  runPlannerOnce,
 } from '../api/client.js'
 
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
@@ -31,6 +34,23 @@ function emptySlot() {
   return { start: '06:00', end: '06:30' }
 }
 
+// 저장 응답에서 사람이 읽을 오류 문구를 뽑는다. 표준 봉투(error.message)뿐 아니라
+// FastAPI 기본 오류 응답({detail: "..."} 또는 422의 {detail: [{msg}]})도 처리해
+// 401/403/404/422가 빈 문자열로 사라지지 않게 한다.
+function describeFailure(res) {
+  if (res?.error?.message) return res.error.message
+  const detail = res?.detail
+  if (typeof detail === 'string' && detail) return detail
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map((d) => (typeof d === 'string' ? d : d?.msg || d?.message))
+      .filter(Boolean)
+    if (msgs.length > 0) return msgs.join(', ')
+  }
+  if (res?.error?.code) return res.error.code
+  return '알 수 없는 오류'
+}
+
 export default function BlogSchedulerPanel() {
   const [isAdmin, setIsAdmin] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -43,7 +63,22 @@ export default function BlogSchedulerPanel() {
   const [oneoff, setOneoff] = useState(null)
   const [oneoffError, setOneoffError] = useState(false)
 
+  const [approvedTopics, setApprovedTopics] = useState([])
+  const [topicsError, setTopicsError] = useState(false)
+  const [selectedTopicId, setSelectedTopicId] = useState('')
+  const [reservationDate, setReservationDate] = useState('')
+  const [reservationTime, setReservationTime] = useState('14:00')
+  const [reservationMode, setReservationMode] = useState('draft')
+  const [creatingReservation, setCreatingReservation] = useState(false)
+  const [reservationMessage, setReservationMessage] = useState(null)
+  const [reservationError, setReservationError] = useState(null)
+
+  const [runningPlanner, setRunningPlanner] = useState(false)
+  const [plannerMessage, setPlannerMessage] = useState(null)
+  const [plannerError, setPlannerError] = useState(null)
+
   const [weekdays, setWeekdays] = useState({})
+  const [policySource, setPolicySource] = useState(null)
   const [recurringMode, setRecurringMode] = useState('draft')
   const [oneoffMode, setOneoffMode] = useState('draft')
 
@@ -59,6 +94,7 @@ const load = useCallback(() => {
     setLoading(true)
     setLoadError(false)
     setOneoffError(false)
+    setTopicsError(false)
     Promise.all([
       getBlogSchedulerStatus(),
       getBlogSchedulerConfig(),
@@ -67,7 +103,8 @@ const load = useCallback(() => {
       getBlogSchedulerOneoff(),
       getPublishingPolicy(),
       getCurrentUser(),
-    ]).then(([s, c, t, h, o, p, u]) => {
+      getTopicPool('approved'),
+    ]).then(([s, c, t, h, o, p, u, tp]) => {
       setStatus(s)
       setConfig(c)
       setToday(t)
@@ -80,7 +117,10 @@ const load = useCallback(() => {
       }
       if (p?.success && p.data) {
         setWeekdays(p.data.weekdays || {})
+        setPolicySource(p.data.source || null)
       }
+      setApprovedTopics(Array.isArray(tp?.data?.topics) ? tp.data.topics : [])
+      setTopicsError(!tp?.success)
       setLoadError(!s?.success || !c?.success || !t?.success || !h?.success || !p?.success)
       setOneoffError(!o?.success)
       setLoading(false)
@@ -132,26 +172,47 @@ const load = useCallback(() => {
     const hasAnyCount = Object.values(weekdays).some((entry) => entry.count > 0)
 
     try {
-      const [blogRes, policyRes] = await Promise.all([
-        patchBlogSchedulerConfig({
-          enabled: hasAnyCount,
-          mode: recurringMode,
-          publish_slots: publishSlots,
-          weekday_only: false,
-        }),
-        patchPublishingPolicy({
-          timezone: 'Asia/Seoul',
-          weekdays,
-          max_pending_reservations: 10,
-        }),
-      ])
+      // 저장 순서: 발행 정책 → (성공 시에만) 반복 스케줄.
+      // 정책 저장이 실패했는데 반복 스케줄만 저장되면 BLOG_SCHEDULE.enabled=true가
+      // 단독으로 기록될 수 있으므로, 정책이 성공하지 않으면 blog/config PATCH를
+      // 호출하지 않는다(아무것도 저장되지 않음 → load() 없이 편집값 유지).
+      const policyRes = await patchPublishingPolicy({
+        timezone: 'Asia/Seoul',
+        weekdays,
+        max_pending_reservations: 10,
+      })
+      if (!policyRes?.success) {
+        setSaving(false)
+        setSaveError(`발행 정책: ${describeFailure(policyRes)} (반복 스케줄은 저장하지 않았습니다)`)
+        return
+      }
+
+      const blogRes = await patchBlogSchedulerConfig({
+        enabled: hasAnyCount,
+        mode: recurringMode,
+        publish_slots: publishSlots,
+        weekday_only: false,
+      })
 
       setSaving(false)
-      if (blogRes.success && policyRes.success) {
+      const results = [
+        { label: '반복 스케줄', res: blogRes },
+        { label: '발행 정책', res: policyRes },
+      ]
+      const failed = results.filter((r) => !r.res?.success)
+      if (failed.length === 0) {
         setSaveMessage('스케줄이 저장되었습니다.')
         load()
       } else {
-        setSaveError((blogRes.error?.message || '') + (policyRes.error?.message || ''))
+        // 부분 실패 시 성공한 쪽은 이미 저장된 상태다 — load()하지 않고 편집 중인
+        // 화면 값을 유지해 사용자가 그대로 다시 저장(재시도)할 수 있게 한다.
+        const reasons = failed.map((r) => `${r.label}: ${describeFailure(r.res)}`).join(' / ')
+        const saved = results.filter((r) => r.res?.success).map((r) => r.label)
+        setSaveError(
+          saved.length > 0
+            ? `일부만 저장되었습니다 (${saved.join(', ')} 저장됨). ${reasons}`
+            : reasons
+        )
       }
     } catch (err) {
       setSaving(false)
@@ -194,6 +255,60 @@ const load = useCallback(() => {
     } catch (err) {
       setRunning(false)
       setRunError(err.message || '실행 실패')
+    }
+  }
+
+  async function handleCreateReservation() {
+    setCreatingReservation(true)
+    setReservationMessage(null)
+    setReservationError(null)
+    if (!reservationDate) {
+      setCreatingReservation(false)
+      setReservationError('예약 날짜를 입력하세요.')
+      return
+    }
+    try {
+      // KST(+09:00) 고정 — Streamlit "1회성 예약 추가" 버튼과 동일하게
+      // Asia/Seoul로 저장한다(add_oneoff_reservation()은 naive datetime을
+      // 거부하므로 오프셋을 명시해야 한다).
+      const scheduledAt = `${reservationDate}T${reservationTime}:00+09:00`
+      const res = await createOneoffReservation({
+        scheduledAt, mode: reservationMode, topicId: selectedTopicId || null,
+      })
+      setCreatingReservation(false)
+      if (res.success) {
+        if (res.data?.duplicate) {
+          setReservationMessage(`동일 시각·모드의 대기 중 예약이 이미 있습니다: ${res.data.scheduled_at}`)
+        } else {
+          setReservationMessage(`예약 추가됨: ${res.data?.scheduled_at} · mode=${res.data?.mode}`)
+        }
+        load()
+      } else {
+        setReservationError(describeFailure(res))
+      }
+    } catch (err) {
+      setCreatingReservation(false)
+      setReservationError(err.message || '예약 추가 실패')
+    }
+  }
+
+  async function handleRunPlannerOnce() {
+    setRunningPlanner(true)
+    setPlannerMessage(null)
+    setPlannerError(null)
+    try {
+      const res = await runPlannerOnce()
+      setRunningPlanner(false)
+      if (res.success) {
+        const scheduled = res.data?.scheduled ?? 0
+        setPlannerMessage(scheduled ? `${scheduled}건 예약 생성됨` : `예약 생성 없음 — ${res.data?.reason || ''}`)
+        load()
+      } else {
+        setPlannerError(describeFailure(res))
+      }
+    } catch (err) {
+      setRunningPlanner(false)
+      setPlannerError(err.message || 'Planner 실행 실패')
     }
   }
 
@@ -264,6 +379,12 @@ const load = useCallback(() => {
                 </span>
               </label>
             </div>
+
+            {policySource === 'default' && (
+              <p className="status-card__hint" role="status">
+                저장된 정책이 없어 기본값을 표시하고 있습니다.
+              </p>
+            )}
 
             <div className="weekday-grid">
               <div className="weekday-header">
@@ -408,6 +529,107 @@ const load = useCallback(() => {
             </div>
             {runMessage && <p className="status-card__success">{runMessage}</p>}
             {runError && <p className="status-card__error">⚠ {runError}</p>}
+          </section>
+
+          <hr className="panel-divider" />
+
+          {/* Topic 예약 / Planner 섹션(CALCMATE-STREAMLIT-RESERVATION-API-IMPLEMENT-01) */}
+          <section className="schedule-section">
+            <h4 className="section-title">Topic 예약 / Planner</h4>
+
+            <p className="section-hint">
+              승인된(approved) Topic을 골라 1회성 예약을 직접 추가하거나, Publishing
+              Planner를 즉시 실행해 승인된 Topic을 정책에 따라 자동으로 예약합니다.
+            </p>
+
+            <div className="form-row">
+              <label className="form-label">Topic (선택, 미선택 시 날짜/시각만으로 예약)</label>
+              <select
+                className="form-select"
+                value={selectedTopicId}
+                onChange={(e) => setSelectedTopicId(e.target.value)}
+              >
+                <option value="">(선택 안 함)</option>
+                {approvedTopics.map((t) => (
+                  <option key={t.topic_id} value={t.topic_id}>
+                    {t.title || t.topic || t.topic_id}
+                  </option>
+                ))}
+              </select>
+              {topicsError && <p className="status-card__error">⚠ 승인된 Topic 목록을 불러오지 못했습니다.</p>}
+              {!topicsError && approvedTopics.length === 0 && (
+                <p className="status-card__hint">현재 승인된(approved) Topic이 없습니다.</p>
+              )}
+            </div>
+
+            <div className="form-row">
+              <label className="form-label">예약 날짜/시각</label>
+              <input
+                type="date"
+                className="form-time"
+                value={reservationDate}
+                onChange={(e) => setReservationDate(e.target.value)}
+                aria-label="예약 날짜"
+              />
+              <input
+                type="time"
+                className="form-time"
+                value={reservationTime}
+                onChange={(e) => setReservationTime(e.target.value)}
+                aria-label="예약 시각"
+                step={300}
+              />
+            </div>
+
+            <div className="form-row form-row--mode">
+              <label className="form-label">실행 방식</label>
+              <div className="mode-options">
+                <label className="mode-option">
+                  <input
+                    type="radio"
+                    name="reservation-mode"
+                    value="draft"
+                    checked={reservationMode === 'draft'}
+                    onChange={(e) => setReservationMode(e.target.value)}
+                  />
+                  <span>Draft</span>
+                </label>
+                <label className="mode-option">
+                  <input
+                    type="radio"
+                    name="reservation-mode"
+                    value="publish"
+                    checked={reservationMode === 'publish'}
+                    onChange={(e) => setReservationMode(e.target.value)}
+                  />
+                  <span>배포</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="form-actions">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleCreateReservation}
+                disabled={creatingReservation}
+              >
+                {creatingReservation ? '추가 중...' : '📌 1회성 예약 추가'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleRunPlannerOnce}
+                disabled={runningPlanner}
+              >
+                {runningPlanner ? '실행 중...' : '▶ Planner 지금 실행'}
+              </button>
+            </div>
+            {reservationMessage && <p className="status-card__success">{reservationMessage}</p>}
+            {reservationError && <p className="status-card__error">⚠ {reservationError}</p>}
+            {plannerMessage && <p className="status-card__success">{plannerMessage}</p>}
+            {plannerError && <p className="status-card__error">⚠ {plannerError}</p>}
+            {!isAdmin && <p className="status-card__hint">예약 추가/Planner 실행에는 관리자 권한이 필요합니다.</p>}
           </section>
 
           <hr className="panel-divider" />

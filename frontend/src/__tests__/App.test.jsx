@@ -126,7 +126,12 @@ describe('API client', () => {
     // 뒤에서 정당하게 추가됨(Publishing Policy/Auto Publishing 저장).
     // getPublishingPolicy/getAutoPublishing/getPublishingPolicyPreview는
     // 정규식에 매치하지 않아 allowlist에 추가할 필요가 없다.
+    // CALCMATE-STREAMLIT-RESERVATION-API-IMPLEMENT-01: createOneoffReservation
+    // ("create" 포함)/runPlannerOnce("run" 포함)가 require_admin 뒤에서 정당하게
+    // 추가됨(수동 1회성 예약 생성 / Publishing Planner 수동 실행).
     const allowedWriteNames = new Set([
+      'createOneoffReservation',
+      'runPlannerOnce',
       'patchBlogSchedulerConfig',
       'runBlogSchedulerOnce',
       'patchGeneralSettings',

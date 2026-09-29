@@ -143,6 +143,26 @@ export function runBlogSchedulerOnceOneoff(mode = 'draft') {
   return sendJson('/api/scheduler/blog/run-once/oneoff', 'POST', { mode })
 }
 
+// CALCMATE-STREAMLIT-RESERVATION-API-IMPLEMENT-01: 수동 1회성 예약 생성(Topic
+// 지정 가능). POST /blog/oneoff는 require_admin이므로 인증 헤더가 필요하다.
+export function createOneoffReservation({ scheduledAt, mode = 'draft', topicId = null }) {
+  return sendJson('/api/scheduler/blog/oneoff', 'POST', {
+    scheduled_at: scheduledAt, mode, topic_id: topicId,
+  })
+}
+
+// Topic Pool 조회(다른 조회 endpoint와 동일하게 인증 없이 공개). status를
+// 지정하지 않으면 전체를 반환한다.
+export function getTopicPool(status = null) {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : ''
+  return getJson(`/api/scheduler/topics${qs}`)
+}
+
+// Publishing Planner 수동 1회 실행(require_admin, body 없음).
+export function runPlannerOnce() {
+  return sendJson('/api/scheduler/planner/run-once', 'POST')
+}
+
 // ── Publishing Policy ──────────────────────────────────────────────────────
 // Publishing Policy는 Blog Scheduler와 별도의 정책(PUBLISHING_POLICY section)을
 // 관리한다. Topic Pool 기반 자동 발행 전용 설정이다.
@@ -563,4 +583,40 @@ export function postTrashRestore(id, confirmation) {
 
 export function getBlogPosts() {
   return getJson('/api/blog')
+}
+
+// ── STEP 65: Content Sync Pending 큐 조회 / 수동 Retry / Resume ─────────────
+// api/routers/scheduler.py의 5개 endpoint와 연결.
+// Streamlit dashboard.py "🔁 동기화 복구" 탭 이관.
+
+export function getPendingSync() {
+  return getJsonAuth('/api/scheduler/content-sync/pending')
+}
+
+export function getProcessingSync() {
+  return getJsonAuth('/api/scheduler/content-sync/processing')
+}
+
+export function getFailedSync() {
+  return getJsonAuth('/api/scheduler/content-sync/failed')
+}
+
+export function postRetrySync(qid) {
+  return sendJson('/api/scheduler/content-sync/retry', 'POST', { qid })
+}
+
+export function postResumeSync(qid) {
+  return sendJson('/api/scheduler/content-sync/resume', 'POST', { qid })
+}
+
+// ── STEP 18-C: Calculator Display Settings ───────────────────────────────────
+// api/routers/settings.py /calculator-display endpoint와 연결.
+// Streamlit dashboard.py "🎨 계산기 노출 설정 (v2)" 이관.
+
+export function getCalculatorDisplaySettings() {
+  return getJsonAuth('/api/settings/calculator-display')
+}
+
+export function patchCalculatorDisplaySettings(updates) {
+  return sendJson('/api/settings/calculator-display', 'PATCH', updates)
 }

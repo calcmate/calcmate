@@ -8,7 +8,7 @@ run-once는 modules.scheduler.run_scheduler_loop()를 기동하지 않고, main.
 from typing import Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from api.auth.dependencies import require_admin
 from api.auth.models import CurrentUser
@@ -18,6 +18,8 @@ from api.services.config_service import ConfigService, ConfigSectionNotAllowed
 from api.services import blog_scheduler_service
 from api.services import topic_pool_service
 from api.services import publishing_planner_service
+from modules.config_loader import load_config
+from adapters.db import dual_adapter
 
 router = APIRouter(prefix="/api/scheduler", tags=["scheduler"])
 
@@ -155,3 +157,99 @@ def post_blog_run_once_oneoff(
         return fail("LOCK_CONFLICT", str(e))
     except ValueError as e:
         return fail("VALIDATION_ERROR", str(e))
+
+
+# ── STEP 65: Content Sync Pending 큐 조회 / 수동 Retry / Resume ───────────────
+# Streamlit dashboard.py "🔁 동기화 복구" 탭(dashboard.py:3887-3989) 이관.
+# adapters.db.dual_adapter의 기존 함수(list_pending_sync, list_all_sync,
+# retry_pending_sync, resume_failed_sync)를 그대로 재사용한다.
+# 새로운 retry 로직/큐 스키마/lock 메커니즘은 전혀 만들지 않는다.
+
+
+class SyncQueueItem(BaseModel):
+    """dual_adapter.enqueue_sync()가 생성하는 큐 레코드 스키마와 호환."""
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    op: Literal["insert", "update", "delete"]
+    table: str
+    row: dict
+    row_id: str
+    direction: Literal["sheets_to_sqlite", "sqlite_to_sheets"] | None = None
+    source_adapter: Literal["DualAdapter", "SQLiteFirstAdapter"] | None = None
+    delete_targets: dict | None = None
+    retry_count: int = 0
+    status: Literal["pending", "processing", "failed_permanent"]
+    error: str = ""
+    created_at: str
+    last_attempt_at: str | None = None
+
+
+class RetryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    qid: str = Field(min_length=1)
+
+
+class ResumeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    qid: str = Field(min_length=1)
+
+
+# ── GET /content-sync/pending ─────────────────────────────────────────────────
+@router.get("/content-sync/pending")
+def get_pending_sync():
+    """pending_sync 큐에서 status='pending'인 항목만 조회."""
+    return ok(dual_adapter.list_pending_sync())
+
+
+# ── GET /content-sync/processing ──────────────────────────────────────────────
+@router.get("/content-sync/processing")
+def get_processing_sync():
+    """pending_sync 큐에서 status='processing'인 항목만 조회."""
+    return ok(dual_adapter.list_all_sync("processing"))
+
+
+# ── GET /content-sync/failed ──────────────────────────────────────────────────
+@router.get("/content-sync/failed")
+def get_failed_sync():
+    """pending_sync 큐에서 status='failed_permanent'인 항목만 조회."""
+    return ok(dual_adapter.list_all_sync("failed_permanent"))
+
+
+# ── POST /content-sync/retry ──────────────────────────────────────────────────
+@router.post("/content-sync/retry")
+def post_retry_sync(
+    body: RetryRequest,
+    user: CurrentUser = Depends(require_admin),
+):
+    """pending_sync 큐 항목 1개를 정확히 1회 재시도한다.
+
+    cfg는 서버에서 load_config()로 조달하며, client에서 받지 않는다.
+    dual_adapter.retry_pending_sync()의 반환값을 그대로 전달한다.
+    """
+    cfg = load_config()
+    result = dual_adapter.retry_pending_sync(body.qid, cfg)
+    if result.get("result") == "success":
+        return ok(result)
+    if result.get("result") in ("not_found", "unsupported", "duplicate"):
+        return fail(result["result"].upper(), result.get("detail", ""))
+    # failed
+    return fail("RETRY_FAILED", result.get("detail", ""))
+
+
+# ── POST /content-sync/resume ─────────────────────────────────────────────────
+@router.post("/content-sync/resume")
+def post_resume_sync(
+    body: ResumeRequest,
+    user: CurrentUser = Depends(require_admin),
+):
+    """failed_permanent 상태의 큐 항목을 pending으로 되돌린다.
+
+    실제 재시도는 하지 않고 상태만 복구한다(다음 재시도는 retry endpoint가 담당).
+    """
+    result = dual_adapter.resume_failed_sync(body.qid)
+    if result.get("result") == "success":
+        return ok(result)
+    if result.get("result") in ("not_found", "unsupported"):
+        return fail(result["result"].upper(), result.get("detail", ""))
+    return fail("RESUME_FAILED", result.get("detail", ""))

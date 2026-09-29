@@ -10,9 +10,11 @@ from datetime import datetime, date
 BASE = Path(__file__).parent
 sys.path.insert(0, str(BASE))
 
-# ── 마법사 우선 체크 (config.yaml 없거나 미설정이면 마법사 실행) ────────
-from modules.setup_wizard import config_exists, render_wizard
+# ── config.yaml 존재 여부 확인 (setup_wizard.py에서 이전됨) ─────────────────
+def config_exists() -> bool:
+    return (BASE / "config" / "config.yaml").exists()
 
+# ── 마법사 우선 체크 (config.yaml 없거나 미설정이면 마법사 실행) ────────
 def _needs_setup() -> bool:
     if not config_exists():
         return True
@@ -27,7 +29,6 @@ def _needs_setup() -> bool:
     return not (has_ai_key or has_sheet_id)
 
 if _needs_setup():
-    render_wizard()
     st.stop()
 
 # ── 일반 대시보드 진입 ────────────────────────────────────────
@@ -62,42 +63,16 @@ def load_cfg():
 
 cfg = load_cfg()
 
-# ── Blog Schedule 스레드 (Golden 10 블로그 콘텐츠 자동 발행) ──────────
-# Calculator Scheduler와 완전히 분리된 독립 스레드.
-# BLOG_SCHEDULE.enabled=true일 때만 기동.
-@st.cache_resource
-def _start_blog_scheduler_thread():
-    import threading
-    for _t in threading.enumerate():
-        if _t.name == "blog-scheduler-loop" and _t.is_alive():
-            return _t
-    from modules.scheduler import run_scheduler_loop
-    import main as _PIPE
+import os
 
-    # Blog 라인 전용 cfg 복사본 — Calculator cfg와 독립
-    blog_cfg = dict(cfg)
-    blog_cfg["scheduler_line"] = "blog"
+# FastAPI worker mode: when set, Streamlit disables its own Blog/One-off workers
+# to avoid duplicate execution. FastAPI becomes the worker owner.
+_FASTAPI_WORKER_MODE = os.environ.get("CALCMATE_FASTAPI_WORKER_MODE", "").strip().lower() in ("1", "true", "yes")
 
-    def _loop():
-        try:
-            run_scheduler_loop(blog_cfg, _PIPE.resolve_blog_publish_fn(blog_cfg))
-        except Exception as e:
-            import logging
-            logging.getLogger("dashboard").error("Blog 스케줄러 스레드 종료: %s", e, exc_info=True)
-            try:
-                from modules import telegram_ops
-                telegram_ops.notify_level(blog_cfg, "ERROR",
-                    "Blog 발행 스케줄러 스레드 종료", e, event="error")
-            except Exception:
-                pass
-
-    t = threading.Thread(target=_loop, name="blog-scheduler-loop", daemon=True)
-    t.start()
-    return t
-
-# Blog Scheduler: BLOG_SCHEDULE.enabled=true일 때만 기동
-if cfg.get("BLOG_SCHEDULE", {}).get("enabled", False):
-    _start_blog_scheduler_thread()
+# Blog/One-off/Publishing Planner 자동 실행 스레드는 FastAPI(WorkerManager)로
+# 완전히 이전되었다(CALCMATE-STREAMLIT-SCHEDULER-AUTO-DECOUPLE-01). Streamlit은
+# 더 이상 자동 스케줄러를 기동하지 않는다 — 수동 "1회성 예약 추가"/"지금 실행"
+# 버튼(아래)만 유지된다.
 
 # ── Calculator Webapp Schedule 스레드 (Phase F-1) ─────────────────────
 # 계산기 "웹앱"(AG.generate_calculator → _site/{slug}/ 스냅샷 → 자동 QA → [배포])을
@@ -242,7 +217,7 @@ NAV_GROUPS = {
     "🧮 Calculator":   ["🏭 App Factory", "🧮 계산기 관리"],
     "📅 Scheduler":    ["📝 Blog Schedule", "📊 AI Pipeline", "🌐 사이트 관리"],
     "💰 Revenue":      ["💰 비용 모니터"],
-    "📡 Logs":         ["⚠️ 오류 로그", "📡 실시간 로그", "🏥 헬스체크"],
+    "📡 Logs":         ["⚠️ 오류 로그", "📡 실시간 로그", "🏥 헬스체크", "🔁 동기화 복구"],
     "🔧 Settings":     ["🔧 설정"],
     "🤖 AI Assistant": ["🤖 AI Assistant"],
 }
@@ -972,23 +947,382 @@ elif tab == "📝 Blog Schedule":
         blog_slots.append({"start": bs_s.strftime("%H:%M"), "end": bs_e.strftime("%H:%M")})
 
     if st.button("💾 Blog 설정 저장", type="primary", key="blog_save"):
+        # 파일 전체를 yaml.dump()로 재작성하면 기존 주석/서식이 소실되므로,
+        # BLOG_SCHEDULE 블록만 텍스트 치환해 나머지 파일 내용을 그대로 보존한다.
+        import re
         cfg_path = BASE / "config" / "config.yaml"
         with open(cfg_path, encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
-        raw["BLOG_SCHEDULE"] = {
-            "enabled": bool(blog_enabled),
-            "mode": blog_mode,
-            "publish_slots": blog_slots,
-            "weekday_only": bool(blog_weekday_only),
-        }
+            text = f.read()
+
+        block_lines = [
+            "BLOG_SCHEDULE:",
+            f"  enabled: {'true' if blog_enabled else 'false'}",
+            f"  mode: {blog_mode}",
+            "  publish_slots:",
+        ]
+        for s in blog_slots:
+            block_lines.append(f'  - start: "{s["start"]}"')
+            block_lines.append(f'    end: "{s["end"]}"')
+        block_lines.append(f"  weekday_only: {'true' if blog_weekday_only else 'false'}")
+        new_block = "\n".join(block_lines) + "\n"
+
+        pattern = re.compile(r"^BLOG_SCHEDULE:\n(?:[ \t].*\n?)*", re.MULTILINE)
+        if pattern.search(text):
+            new_text = pattern.sub(lambda _m: new_block, text, count=1)
+        else:
+            new_text = text.rstrip("\n") + "\n\n" + new_block
+
         with open(cfg_path, "w", encoding="utf-8") as f:
-            yaml.dump(raw, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            f.write(new_text)
         load_cfg.clear()
         cfg = load_cfg()
         st.success(f"✅ Blog 설정 저장 완료 · enabled={blog_enabled} · slots={len(blog_slots)}개")
         st.rerun()
 
     st.caption("⚠️ Blog 스케줄러 ON/OFF 변경은 Dashboard 재시작 후 적용됩니다.")
+
+    # ── 1회성(one-off) 예약 발행(CALCMATE-ONEOFF-SCHEDULE-STRUCTURE-02) ──
+    # 위 publish_slots(매일 반복 시간대) 설정/저장 로직과 완전히 분리된 별도
+    # 섹션이다 — 기존 publish_slots 관련 코드는 이 블록에서 전혀 참조/수정하지
+    # 않으며, 저장 대상도 config.yaml이 아닌 별도 파일(oneoff_schedule.json)이다.
+    st.divider()
+    st.subheader("📌 1회성 예약 발행 (one-off)")
+    st.caption("지정한 날짜·시각(Asia/Seoul 기준)에 정확히 1건만 WordPress에 게시합니다. "
+               "요일별/반복/개수 설정은 지원하지 않습니다.")
+
+    # CALCMATE-ONEOFF-SCHEDULE-SAFETY-FIX-01: enabled=false면 예약은 저장되지만
+    # 실행 스레드(_start_blog_oneoff_scheduler_thread)가 뜨지 않아 아무 것도
+    # 실행되지 않는다 — 이를 명확히 안내한다(_blog_enabled는 위 recurring
+    # 섹션에서 이미 계산된 변수를 그대로 재사용, publish_slots UI는 손대지 않음).
+    if not _blog_enabled:
+        st.warning("⚠️ 현재 BLOG_SCHEDULE.enabled가 꺼져 있습니다(off). 예약은 저장되지만 "
+                   "**실행되지 않습니다**. 위 'Blog 스케줄러 사용(enabled)' 토글을 켜고 "
+                   "Dashboard를 재시작해야 예약이 실행됩니다.")
+    else:
+        st.caption("BLOG_SCHEDULE.enabled가 켜져 있어(on) 예약 시각 도달 시 자동 실행됩니다.")
+
+    from modules.scheduler import load_oneoff, add_oneoff_reservation
+
+    oneoff_blog_cfg = dict(cfg)
+    oneoff_blog_cfg["scheduler_line"] = "blog"
+
+    oc1, oc2, oc3 = st.columns(3)
+    oneoff_mode = oc1.selectbox(
+        "예약 모드", ["draft", "publish"],
+        format_func=lambda m: {"draft": "WP Draft (비공개 초안)", "publish": "WP Publish (공개 발행)"}.get(m, m),
+        key="blog_oneoff_mode")
+    oneoff_date = oc2.date_input("예약 날짜", key="blog_oneoff_date")
+    oneoff_time = oc3.time_input("예약 시각", value=_parse_t("14:00"), key="blog_oneoff_time", step=300)
+
+    if st.button("📌 1회성 예약 추가", key="blog_oneoff_add"):
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo as _ZoneInfo
+        scheduled_dt = _dt.combine(oneoff_date, oneoff_time).replace(tzinfo=_ZoneInfo("Asia/Seoul"))
+        try:
+            entry = add_oneoff_reservation(oneoff_blog_cfg, scheduled_dt, oneoff_mode)
+        except RuntimeError as e:
+            st.error(f"❌ 예약 추가 실패: {e}")
+        else:
+            if entry.get("duplicate"):
+                st.warning(f"⚠️ 동일 시각·모드의 대기 중 예약이 이미 있어 추가하지 않았습니다: "
+                          f"{entry['scheduled_at']} · mode={entry['mode']}")
+            else:
+                st.success(f"✅ 예약 추가됨: {entry['scheduled_at']} · mode={entry['mode']}")
+            st.rerun()
+
+    _oneoff_list = load_oneoff(oneoff_blog_cfg)
+    if _oneoff_list:
+        st.markdown("**현재 1회성 예약 목록**")
+        for _e in sorted(_oneoff_list, key=lambda x: x.get("scheduled_at", "")):
+            st.write(f"- `{_e.get('scheduled_at')}` · mode=`{_e.get('mode')}` · status=`{_e.get('status')}`")
+    else:
+        st.caption("등록된 1회성 예약이 없습니다.")
+
+    # ── 자동 콘텐츠 발행 정책 (Publishing Policy) ──────────────────────
+    # CALCMATE-AUTO-CONTENT-DASHBOARD-POLICY-UI-IMPLEMENT-01: Topic Pool 기반
+    # 자동 콘텐츠 발행 전용 신규 섹션. 위 BLOG_SCHEDULE(Golden 10)/One-off 섹션의
+    # 변수·저장 로직은 이 블록에서 전혀 참조/수정하지 않는다 — 완전히 별도의
+    # config 키(PUBLISHING_POLICY/AUTO_PUBLISHING)를 쓰며, BLOG_SCHEDULE.enabled를
+    # 재사용하지 않는다. 이번 STEP은 "설정 저장"까지만 한다 — AUTO_PUBLISHING.enabled를
+    # ON으로 저장해도 실제 Topic 수집/예약/WP 발행은 아직 실행되지 않는다(연결은
+    # 별도 후속 STEP).
+    st.divider()
+    st.subheader("🤖 자동 콘텐츠 발행 정책 (Publishing Policy)")
+    st.caption("Topic Pool 기반 자동 콘텐츠 발행 전용 설정입니다. 위 Golden 10 Blog "
+               "Schedule(BLOG_SCHEDULE)과는 완전히 별개이며, 여기서 저장해도 기존 "
+               "Blog Schedule 동작에는 아무 영향이 없습니다.")
+
+    from modules import publishing_policy as PP
+
+    _pp_current = cfg.get("PUBLISHING_POLICY")
+    if not isinstance(_pp_current, dict):
+        _pp_current = PP.DEFAULT_POLICY
+    _weekday_labels = {
+        "mon": "월요일", "tue": "화요일", "wed": "수요일", "thu": "목요일",
+        "fri": "금요일", "sat": "토요일", "sun": "일요일",
+    }
+
+    st.caption(f"timezone: `{PP.ALLOWED_TIMEZONE}` (현재 버전에서는 다른 timezone을 지원하지 않습니다)")
+
+    _pp_weekdays_input = {}
+    for _day in PP.WEEKDAYS:
+        _day_entry = (_pp_current.get("weekdays") or {}).get(_day)
+        if not isinstance(_day_entry, dict):
+            _day_entry = {"count": 0, "time_ranges": []}
+        with st.container(border=True):
+            st.markdown(f"**{_weekday_labels[_day]}**")
+            _count = st.number_input(
+                "발행 개수", min_value=0, max_value=10,
+                value=int(_day_entry.get("count", 0) or 0), step=1,
+                key=f"pp_count_{_day}")
+            _ranges = []
+            _existing_ranges = _day_entry.get("time_ranges") or []
+            for _i in range(int(_count)):
+                _cur_range = _existing_ranges[_i] if _i < len(_existing_ranges) else \
+                    {"start": "09:00", "end": "18:00"}
+                rc1, rc2 = st.columns(2)
+                _rs = rc1.time_input(
+                    f"{_i + 1}번째 시작", value=_parse_t(_cur_range.get("start", "09:00")),
+                    key=f"pp_range_{_day}_{_i}_start", step=300)
+                _rend = rc2.time_input(
+                    f"{_i + 1}번째 종료", value=_parse_t(_cur_range.get("end", "18:00")),
+                    key=f"pp_range_{_day}_{_i}_end", step=300)
+                _ranges.append({"start": _rs.strftime("%H:%M"), "end": _rend.strftime("%H:%M")})
+            if int(_count) == 0:
+                st.caption("발행 없음")
+            _pp_weekdays_input[_day] = {"count": int(_count), "time_ranges": _ranges}
+
+    pp_max_pending = st.number_input(
+        "동시 대기 가능한 예약 수(max_pending_reservations)", min_value=1, max_value=100,
+        value=int(_pp_current.get("max_pending_reservations", 10) or 10), step=1,
+        key="pp_max_pending")
+
+    _pp_candidate_policy = {
+        "timezone": PP.ALLOWED_TIMEZONE,
+        "weekdays": _pp_weekdays_input,
+        "max_pending_reservations": int(pp_max_pending),
+    }
+
+    if st.button("💾 Publishing Policy 저장", type="primary", key="pp_save"):
+        # 검증은 반드시 기존 publishing_policy.validate_policy()만 사용한다 —
+        # Dashboard에서 별도 규칙을 복제하지 않는다(STEP6 원칙).
+        _pp_errors = PP.validate_policy(_pp_candidate_policy)
+        if _pp_errors:
+            st.error("❌ Publishing Policy 저장 실패 — 다음 오류를 확인하세요:")
+            for _e in _pp_errors:
+                st.write(f"- {_e}")
+        else:
+            # 파일 전체를 yaml.dump()로 재작성하지 않고, 위 BLOG_SCHEDULE 저장과
+            # 동일한 방식(자기 블록만 정규식 치환)으로 나머지 내용을 그대로 보존한다.
+            import re
+            cfg_path = BASE / "config" / "config.yaml"
+            with open(cfg_path, encoding="utf-8") as f:
+                _pp_text = f.read()
+
+            _pp_lines = ["PUBLISHING_POLICY:", f'  timezone: "{PP.ALLOWED_TIMEZONE}"', "  weekdays:"]
+            for _day in PP.WEEKDAYS:
+                _entry = _pp_candidate_policy["weekdays"][_day]
+                _pp_lines.append(f"    {_day}:")
+                _pp_lines.append(f"      count: {_entry['count']}")
+                if _entry["time_ranges"]:
+                    _pp_lines.append("      time_ranges:")
+                    for _r in _entry["time_ranges"]:
+                        _pp_lines.append(f'        - start: "{_r["start"]}"')
+                        _pp_lines.append(f'          end: "{_r["end"]}"')
+                else:
+                    _pp_lines.append("      time_ranges: []")
+            _pp_lines.append(f"  max_pending_reservations: {_pp_candidate_policy['max_pending_reservations']}")
+            _pp_new_block = "\n".join(_pp_lines) + "\n"
+
+            _pp_pattern = re.compile(r"^PUBLISHING_POLICY:\n(?:[ \t].*\n?)*", re.MULTILINE)
+            if _pp_pattern.search(_pp_text):
+                _pp_new_text = _pp_pattern.sub(lambda _m: _pp_new_block, _pp_text, count=1)
+            else:
+                _pp_new_text = _pp_text.rstrip("\n") + "\n\n" + _pp_new_block
+
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                f.write(_pp_new_text)
+            load_cfg.clear()
+            cfg = load_cfg()
+            st.success("✅ Publishing Policy 저장 완료")
+            st.rerun()
+
+    # ── 자동 발행 실행 스위치(AUTO_PUBLISHING.enabled) ──────────────────
+    # BLOG_SCHEDULE.enabled와 완전히 분리된 신규 키. 이번 STEP에서는 값을
+    # 저장하는 것까지만 하며, 어떤 Scheduler/Planner 실행 로직도 이 값을 아직
+    # 읽지 않는다(ON으로 저장해도 실제로 아무 것도 실행되지 않음 — 후속 STEP에서
+    # 실행 루프에 연결).
+    st.divider()
+    _auto_pub_current = bool((cfg.get("AUTO_PUBLISHING") or {}).get("enabled", False))
+    auto_pub_enabled = st.toggle("자동 발행 (Auto Publishing)", value=_auto_pub_current,
+                                  key="auto_publishing_enabled")
+    st.caption("⚠️ 이 스위치는 현재 설정 저장 전용입니다 — 이번 단계에서는 실제 Topic 수집/"
+               "예약/WP 발행 실행 로직에 연결되어 있지 않습니다(다음 단계에서 별도 연결).")
+
+    if st.button("💾 자동 발행 스위치 저장", key="auto_pub_save"):
+        import re
+        cfg_path = BASE / "config" / "config.yaml"
+        with open(cfg_path, encoding="utf-8") as f:
+            _ap_text = f.read()
+        _ap_new_block = "AUTO_PUBLISHING:\n" + f"  enabled: {'true' if auto_pub_enabled else 'false'}\n"
+        _ap_pattern = re.compile(r"^AUTO_PUBLISHING:\n(?:[ \t].*\n?)*", re.MULTILINE)
+        if _ap_pattern.search(_ap_text):
+            _ap_new_text = _ap_pattern.sub(lambda _m: _ap_new_block, _ap_text, count=1)
+        else:
+            _ap_new_text = _ap_text.rstrip("\n") + "\n\n" + _ap_new_block
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            f.write(_ap_new_text)
+        load_cfg.clear()
+        cfg = load_cfg()
+        st.success(f"✅ 자동 발행 스위치 저장 완료 · enabled={auto_pub_enabled}")
+        st.rerun()
+
+    # ── Preview: 이번 주 예상 발행 시간(정책 기반 계산만, 실제 예약/DB/WP/AI 없음) ──
+    st.divider()
+    st.subheader("🔍 이번 주 예상 발행 시간 (Preview)")
+    st.caption("현재 화면에 입력된(아직 저장하지 않았어도) 정책 기준으로 계산한 예상 시각입니다. "
+               "실제 예약을 생성하지 않으며 DB/WP/AI를 호출하지 않습니다.")
+
+    _preview_errors = PP.validate_policy(_pp_candidate_policy)
+    if _preview_errors:
+        st.warning("현재 입력된 정책이 유효하지 않아 미리보기를 표시할 수 없습니다. "
+                   "위 오류를 먼저 수정하세요.")
+    else:
+        if st.button("🔄 미리보기 다시 뽑기", key="pp_preview_reroll"):
+            st.session_state.pop("pp_preview_seed", None)
+        import random as _pp_random
+        if "pp_preview_seed" not in st.session_state:
+            st.session_state["pp_preview_seed"] = _pp_random.randint(0, 2**31)
+        _preview_rng = _pp_random.Random(st.session_state["pp_preview_seed"])
+
+        from datetime import date as _date, timedelta as _timedelta
+        _today = _date.today()
+        _any_preview = False
+        for _offset in range(7):
+            _d = _today + _timedelta(days=_offset)
+            _times = PP.candidate_times_for_date(_pp_candidate_policy, _d, rng=_preview_rng)
+            if _times:
+                _any_preview = True
+                st.write(f"**{_weekday_labels[PP.weekday_key_for_date(_d)]} ({_d.isoformat()})**")
+                for _t in sorted(_times):
+                    st.write(f"　- {_t}")
+        if not _any_preview:
+            st.caption("이번 주(오늘부터 7일) 예정된 발행이 없습니다.")
+
+    # ── 수동 Planner 실행("지금 실행") ──────────────────────────────────
+    # CALCMATE-AUTO-CONTENT-AUTO-PUBLISHING-EXECUTION-DECOUPLING-D-IMPLEMENT-01:
+    # AUTO_PUBLISHING.enabled/BLOG_SCHEDULE.enabled 두 스위치 상태와 완전히
+    # 무관하게 동작한다(자동 loop/스레드와 분리된 별도 수동 경로) — 이 버튼은
+    # modules.publishing_planner.run_planner_once(cfg)를 정확히 1회 호출할
+    # 뿐이다. run_planner_loop()/_start_publishing_planner_thread()는 호출
+    # 하지 않으며(자동 loop/스레드를 새로 만들지 않음), scheduling/priority/
+    # policy slot 계산/pending cap/duplicate 검사/Topic 상태 변경 등은 전부
+    # run_planner_once() 책임이므로 여기서 재구현하지 않는다. Golden10/
+    # 기존 One-off 레거시 경로는 이 버튼에서 전혀 참조하지 않는다 — 오직
+    # 승인된(approved) Topic Pool topic만 대상이다. 이 버튼 클릭이
+    # config.yaml/AUTO_PUBLISHING.enabled를 변경하지도 않는다(정책 저장
+    # 버튼과 완전히 분리).
+    st.divider()
+    st.subheader("▶ 수동 Planner 실행")
+    st.caption("현재 승인된(approved) Topic을 Publishing Policy에 따라 지금 즉시 "
+               "예약 생성합니다. AUTO_PUBLISHING/BLOG_SCHEDULE 스위치 상태와 "
+               "무관하게 실행할 수 있습니다. 실제 WordPress 발행은 이 버튼에서 "
+               "일어나지 않습니다(One-off Scheduler가 나중에 실행).")
+
+    if st.button("▶ 지금 실행", key="pp_run_planner_now"):
+        from modules.publishing_planner import run_planner_once
+        with st.spinner("Publishing Planner 실행 중..."):
+            _planner_result = run_planner_once(cfg)
+        _scheduled = _planner_result.get("scheduled", 0)
+        _reason = _planner_result.get("reason", "")
+        if _scheduled:
+            st.success(f"✅ {_scheduled}건 예약 생성됨")
+        elif _reason:
+            st.info(f"예약 생성 없음 — {_reason}")
+        else:
+            st.info("예약 생성 없음")
+        for _r in _planner_result.get("results", []):
+            st.write(f"- topic_id=`{_r.get('topic_id')}` · status=`{_r.get('status')}` "
+                     f"· reason=`{_r.get('reason', '')}`")
+
+    # ── published Topic ↔ WP 상태 수동 대조(reconciliation) ─────────────
+    # CALCMATE-AUTO-CONTENT-PUBLISHED-WP-RECONCILIATION-GAP-FOLLOWUP-DECISION-01:
+    # 버튼을 누르지 않으면 실행되지 않는다(주기적 scheduler에 연결하지 않음 —
+    # 채택된 정책: 후보 A만, 후보 B(자동 reconciliation)는 구현하지 않음).
+    # 이 버튼은 modules.topic_wp_reconciliation.check_published_topic_wp_status()
+    # 조회 결과를 표시만 한다 — Topic 상태를 바꾸거나 WP를 수정하지 않는다.
+    st.divider()
+    st.subheader("🔍 published Topic ↔ WP 상태 대조")
+    st.caption("현재 \"published\" 상태인 Topic을 실제 WordPress 게시물 상태와 "
+               "대조합니다(조회만, 자동 변경 없음). 주기적으로 자동 실행되지 "
+               "않으며, 버튼을 누를 때만 WP GET 1회가 발생합니다.")
+
+    from modules import topic_pool as _rc_tp
+    _rc_published = _rc_tp.list_topics(cfg, status="published")
+    if not _rc_published:
+        st.caption("현재 published 상태인 Topic이 없습니다.")
+    else:
+        _rc_options = {f"{t['topic_id']} ({t.get('slug', '')})": t["topic_id"]
+                       for t in _rc_published}
+        _rc_label = st.selectbox("대상 Topic", list(_rc_options.keys()), key="rc_topic_select")
+        _rc_topic_id = _rc_options[_rc_label]
+
+        if st.button("🔍 WP 상태 대조", key="rc_check_button"):
+            from modules.topic_wp_reconciliation import check_published_topic_wp_status
+            st.session_state["rc_last_result"] = check_published_topic_wp_status(cfg, _rc_topic_id)
+            st.session_state["rc_last_topic_id"] = _rc_topic_id
+
+        # WIREUP-01: 조회 결과를 session_state에 보관해, 아래 수동 복귀 버튼을
+        # 눌러 rerun이 발생해도 방금 조회한 결과가 그대로 유지되게 한다(재조회
+        # 강제 없음). 이 블록 자체는 여전히 READ-ONLY 표시만 한다.
+        _rc_result = st.session_state.get("rc_last_result")
+        if _rc_result and st.session_state.get("rc_last_topic_id") == _rc_topic_id:
+            st.write(f"- WP post id: `{_rc_result.get('wp_post_id')}`")
+            st.write(f"- WP status: `{_rc_result.get('wp_status')}`")
+            st.write(f"- 판정: `{_rc_result.get('status')}`")
+
+            _rc_explanations = {
+                "MATCH": ("success", "✅ MATCH — Topic과 WP 상태가 일치합니다. 조치가 필요 없습니다."),
+                "MISMATCH": ("warning", "⚠️ MISMATCH — WP 상태가 published가 아닙니다(draft/trash/기타). "
+                             "실제로 WP에서 내려간 것이 맞는지 사람이 직접 WP에서 확인하세요."),
+                "WP_POST_NOT_FOUND": ("warning", "⚠️ WP_POST_NOT_FOUND — WP가 404를 반환했습니다(영구 삭제로 "
+                                      "추정). 사람이 직접 WP를 확인하세요."),
+                "WP_POST_ID_UNAVAILABLE": ("info", "ℹ️ WP_POST_ID_UNAVAILABLE — 예약 정보에서 WP post id를 "
+                                           "찾을 수 없어 대조 자체가 불가능합니다(추측하지 않음)."),
+                "WP_CHECK_ERROR": ("info", "ℹ️ WP_CHECK_ERROR — WP 조회 중 오류가 발생했습니다(네트워크 등). "
+                                   "MATCH/MISMATCH를 단정하지 않습니다 — 잠시 후 다시 시도하세요."),
+                "TOPIC_NOT_FOUND": ("error", "❌ TOPIC_NOT_FOUND — 해당 Topic을 찾을 수 없습니다."),
+                "TOPIC_NOT_PUBLISHED": ("error", "❌ TOPIC_NOT_PUBLISHED — 대상이 이미 published 상태가 "
+                                        "아닙니다(목록이 갱신되지 않았을 수 있습니다)."),
+            }
+            _rc_level, _rc_msg = _rc_explanations.get(
+                _rc_result.get("status"), ("info", _rc_result.get("status")))
+            getattr(st, _rc_level)(_rc_msg)
+
+            # ── 수동 복귀("published → candidate") ──────────────────────
+            # WIREUP-01 STEP6: MISMATCH/WP_POST_NOT_FOUND를 확인했다고 자동으로
+            # candidate로 되돌리지 않는다. 체크박스 동의 + 명시적 클릭이 모두
+            # 있어야만 transition_status(..., manual=True)를 정확히 1회 호출한다.
+            # 실패(ValueError) 시 transition_status가 어떤 필드도 저장하지 않으므로
+            # Topic 상태는 그대로 유지된다.
+            if _rc_result.get("status") in ("MISMATCH", "WP_POST_NOT_FOUND"):
+                st.divider()
+                _rc_confirm = st.checkbox(
+                    "이 Topic을 다시 candidate로 되돌리는 것에 동의합니다"
+                    "(WP 상태를 직접 확인했으며, 복구/재발행은 별도로 진행합니다).",
+                    key="rc_recover_confirm")
+                if st.button("⚠️ published → candidate 수동 복귀", key="rc_recover_button",
+                             disabled=not _rc_confirm):
+                    try:
+                        _rc_tp.transition_status(
+                            cfg, _rc_topic_id, "candidate", actor="dashboard_operator",
+                            reason=f"wp_reconciliation_{_rc_result.get('status')}", manual=True)
+                        st.success("✅ candidate로 복귀했습니다.")
+                        st.session_state.pop("rc_last_result", None)
+                        st.session_state.pop("rc_last_topic_id", None)
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(f"❌ 복귀 실패(상태 변경 없음): {e}")
 
 # ══════════════════════════════════════════════════════════════
 # 탭: 🌐 사이트 관리 (사이트/계산기 생성 마법사 + 관리)
@@ -1150,435 +1484,15 @@ elif tab == "🌐 사이트 관리":
                 if ok: st.cache_resource.clear(); st.rerun()
 
     # ── 🧙 새 사이트 마법사 (5단계: Profile→Platform→Feature→Settings→Pipeline) ──
-    with st.expander("🧙 새 사이트 마법사 (5단계)"):
-        WP_FEATS = ["글 작성", "자동 발행", "SEO", "이미지 업로드", "카테고리"]
-        CALC_FEATS = ["계산기 생성", "계산기 SEO 글", "FAQ 생성", "AI Reviewer", "HTML 생성"]
-        COMMON_FEATS = ["Scheduler", "Telegram", "AI Assistant", "Analytics", "Cost Manager", "Retry Queue"]
-        w = st.session_state.setdefault("wiz6", {"step": 1, "data": {}})
-        step, d = w["step"], w["data"]
-        st.caption(f"진행: {step}/5")
-
-        if step == 1:
-            st.markdown("**Step 1 · Site Profile**")
-            d["site_name"] = st.text_input("사이트명 *", value=d.get("site_name", ""), key="w6_name")
-            d["domain"]    = st.text_input("도메인 *", value=d.get("domain", ""), key="w6_dom")
-            d["wp_url"]    = st.text_input("WordPress URL (선택)", value=d.get("wp_url", ""), key="w6_wpurl")
-            if st.button("다음 →", key="w6_n1"):
-                if d.get("site_name") and d.get("domain"):
-                    w["step"] = 2; st.rerun()
-                else:
-                    st.error("사이트명과 도메인은 필수입니다.")
-
-        elif step == 2:
-            st.markdown("**Step 2 · Platform 선택 (독립 복수)**")
-            pf = d.get("platforms", [])
-            use_wp   = st.checkbox("WordPress", value=("WordPress" in pf), key="w6_pwp")
-            use_calc = st.checkbox("Calculator", value=("Calculator" in pf), key="w6_pcalc")
-            if use_wp:
-                st.caption("WordPress 자격증명 (필수)")
-                d["wp_user"] = st.text_input("WordPress ID *", value=d.get("wp_user", ""), key="w6_wpuser")
-                d["wp_pw"]   = st.text_input("App Password *", type="password", value=d.get("wp_pw", ""), key="w6_wppw")
-            c1, c2 = st.columns(2)
-            if c1.button("← 이전", key="w6_b2"): w["step"] = 1; st.rerun()
-            if c2.button("다음 →", key="w6_n2"):
-                pf = (["WordPress"] if use_wp else []) + (["Calculator"] if use_calc else [])
-                d["platforms"] = pf
-                if use_wp and not (d.get("wp_url") and d.get("wp_user") and d.get("wp_pw")):
-                    st.error("WordPress 선택 시 URL(Step1)/ID/App Password가 필요합니다.")
-                else:
-                    w["step"] = 3; st.rerun()
-
-        elif step == 3:
-            st.markdown("**Step 3 · Feature 선택 (Platform별 + 공통)**")
-            pf, sel = d.get("platforms", []), {}
-            if "WordPress" in pf:
-                st.markdown("*WordPress*")
-                sel["wordpress"] = [f for f in WP_FEATS if st.checkbox(f, value=True, key=f"w6_fw_{f}")]
-            if "Calculator" in pf:
-                st.markdown("*Calculator*")
-                sel["calculator"] = [f for f in CALC_FEATS if st.checkbox(f, value=True, key=f"w6_fc_{f}")]
-            st.markdown("*공통*")
-            sel["common"] = [f for f in COMMON_FEATS if st.checkbox(f, value=True, key=f"w6_fco_{f}")]
-            c1, c2 = st.columns(2)
-            if c1.button("← 이전", key="w6_b3"): w["step"] = 2; st.rerun()
-            if c2.button("다음 →", key="w6_n3"):
-                d["features"] = sel; w["step"] = 4; st.rerun()
-
-        elif step == 4:
-            st.markdown("**Step 4 · Settings (Global 기본값 → Override)**")
-            st.caption("미변경 시 Global 기본값 적용. 상세 항목은 작업7(Site Settings)에서 편집.")
-            a1, a2, a3 = st.columns(3)
-            d["research_ai"] = a1.selectbox("Research AI", AI_PROFILES,
-                index=AI_PROFILES.index(d.get("research_ai", SW.DEFAULT_AI["research_ai"])), key="w6_rai")
-            d["writing_ai"] = a2.selectbox("Writing AI", AI_PROFILES,
-                index=AI_PROFILES.index(d.get("writing_ai", SW.DEFAULT_AI["writing_ai"])), key="w6_wai")
-            d["review_ai"] = a3.selectbox("Review AI", AI_PROFILES,
-                index=AI_PROFILES.index(d.get("review_ai", SW.DEFAULT_AI["review_ai"])), key="w6_vai")
-            d["daily_override"] = st.number_input("일 발행수 (Override)", 1, 20,
-                int(d.get("daily_override", cfg.get("DAILY_POST_COUNT", 3))), key="w6_daily")
-            c1, c2 = st.columns(2)
-            if c1.button("← 이전", key="w6_b4"): w["step"] = 3; st.rerun()
-            if c2.button("다음 →", key="w6_n4"): w["step"] = 5; st.rerun()
-
-        elif step == 5:
-            st.markdown("**Step 5 · Pipeline 연결 확인**")
-            pf = d.get("platforms", [])
-            if "Calculator" in pf and "WordPress" in pf:
-                pipe_msg = "이 Site는 **Calculator Pipeline → WordPress 발행** 순서로 실행됩니다."
-            elif "Calculator" in pf:
-                pipe_msg = "이 Site는 **Calculator Pipeline**으로 실행됩니다."
-            elif "WordPress" in pf:
-                pipe_msg = "이 Site는 **RSS/정책 Pipeline → WordPress 발행**으로 실행됩니다."
-            else:
-                pipe_msg = "Platform 미선택 — 나중에 Platform을 추가하면 Pipeline이 결정됩니다."
-            st.info(pipe_msg)
-            st.json({"profile": {"name": d.get("site_name"), "domain": d.get("domain")},
-                     "platforms": pf, "features": d.get("features", {}),
-                     "override": {"research_ai": d.get("research_ai"), "writing_ai": d.get("writing_ai"),
-                                  "review_ai": d.get("review_ai"), "daily": d.get("daily_override")}})
-            c1, c2 = st.columns(2)
-            if c1.button("← 이전", key="w6_b5"): w["step"] = 4; st.rerun()
-            if c2.button("✅ 사이트 생성", type="primary", key="w6_create"):
-                needs_wp = "WordPress" in pf
-                label = "사용자정의" if needs_wp else "계산기"
-                ok, msg = SW.create_site(cfg, label, {
-                    "site_name": d.get("site_name", ""), "domain": d.get("domain", ""), "category": "",
-                    "wp_url": d.get("wp_url", ""), "wp_user": d.get("wp_user", ""),
-                    "wp_app_password": d.get("wp_pw", ""), "rss_sources": "",
-                    "research_ai": d.get("research_ai", ""), "writing_ai": d.get("writing_ai", ""),
-                    "review_ai": d.get("review_ai", ""),
-                })
-                if ok:
-                    try:  # platforms/features를 신규 컬럼으로 기록(create_site 무변경)
-                        rows = SW.list_sites(cfg)
-                        nm = d.get("site_name", "").strip()
-                        nr = next((x for x in rows if str(x.get("site_name", "")).strip() == nm), None)
-                        if nr:
-                            SW.update_site(cfg, nr.get("site_id", ""), {
-                                "platforms": _json.dumps(pf, ensure_ascii=False),
-                                "features": _json.dumps(d.get("features", {}), ensure_ascii=False),
-                                "daily_override": str(d.get("daily_override", "")),
-                            })
-                    except Exception as e:
-                        st.warning(f"platforms/features 기록 경고: {e}")
-                    st.success(msg + " · Platform/Feature 저장됨")
-                    st.session_state.pop("wiz6", None)
-                    st.cache_resource.clear(); st.rerun()
-                else:
-                    st.error(msg)
-
-    # ── ➕ 사이트 추가 ──
-    with st.expander("➕ 사이트 추가", expanded=True):
-        type_label = st.selectbox("유형 선택", SW.SITE_TYPES, key="sw_type")
-        spec = SW.TYPE_DEFS[type_label]
-        st.caption(f"site_type=`{spec['site_type']}` · 수익화=`{spec['monetization']}` · "
-                   f"content_mode=`{spec['content_mode']}`"
-                   + (" · ⚠️ 수집기 미구현(stub)" if spec['site_type'] in SW.STUB_TYPES else ""))
-
-        if type_label == "계산기":
-            c1, c2 = st.columns(2)
-            calc_name = c1.text_input("계산기명 *", placeholder="주휴수당 계산기", key="sw_calc_name")
-            calc_cat  = c2.text_input("카테고리", placeholder="노무/급여", key="sw_calc_cat")
-            calc_desc = st.text_area("설명", placeholder="예: 주휴수당 자동 계산", key="sw_calc_desc")
-            st.caption("예시: 주휴수당 계산기 · 퇴직금 계산기 · 대출이자 계산기")
-            if st.button("💾 계산기 등록", type="primary", key="sw_calc_save"):
-                ok, msg = SW.create_calculator(cfg, {
-                    "name": calc_name, "description": calc_desc, "category": calc_cat})
-                (st.success if ok else st.error)(msg)
-                if ok:
-                    st.cache_resource.clear(); st.rerun()
-        else:
-            c1, c2 = st.columns(2)
-            site_name = c1.text_input("사이트명 *", key="sw_name")
-            domain    = c2.text_input("도메인 *", placeholder="example.com", key="sw_domain")
-            category  = st.text_input("카테고리", placeholder="복지/정책", key="sw_cat")
-
-            wp_url = wp_user = wp_pw = ""
-            if spec["needs_wp"]:
-                st.markdown("**WordPress 연동**")
-                w1, w2 = st.columns(2)
-                wp_url  = w1.text_input("WordPress URL *", placeholder="https://yourblog.com", key="sw_wpurl")
-                wp_user = w2.text_input("WordPress ID *", placeholder="admin", key="sw_wpuser")
-                wp_pw   = st.text_input("App Password *", type="password",
-                                        placeholder="xxxx xxxx xxxx xxxx", key="sw_wppw")
-            rss = ""
-            if spec["uses_rss"]:
-                rss = st.text_input("RSS 수집원(콤마 구분, 선택)",
-                                    placeholder="https://www.korea.kr/rss/policy.xml", key="sw_rss")
-
-            with st.expander("AI 프로필(선택) — 미선택 시 기본값"):
-                a1, a2, a3 = st.columns(3)
-                research = a1.selectbox("Research AI", AI_PROFILES,
-                                        index=AI_PROFILES.index(SW.DEFAULT_AI["research_ai"]), key="sw_research")
-                writing  = a2.selectbox("Writing AI", AI_PROFILES,
-                                        index=AI_PROFILES.index(SW.DEFAULT_AI["writing_ai"]), key="sw_writing")
-                review   = a3.selectbox("Review AI", AI_PROFILES,
-                                        index=AI_PROFILES.index(SW.DEFAULT_AI["review_ai"]), key="sw_review")
-
-            if st.button("💾 사이트 등록", type="primary", key="sw_site_save"):
-                ok, msg = SW.create_site(cfg, type_label, {
-                    "site_name": site_name, "domain": domain, "category": category,
-                    "wp_url": wp_url, "wp_user": wp_user, "wp_app_password": wp_pw,
-                    "rss_sources": rss,
-                    "research_ai": research, "writing_ai": writing, "review_ai": review,
-                })
-                (st.success if ok else st.error)(msg)
-                if ok:
-                    st.cache_resource.clear(); st.rerun()
-
-    st.divider()
-    # ── 사이트 목록 / 관리 ──
-    st.subheader("📋 등록된 사이트")
-    try:
-        sites = SW.list_sites(cfg)
-    except Exception as e:
-        sites = []
-        st.error(f"사이트 목록 조회 실패(시트 권한 확인): {e}")
-    if not sites:
-        st.caption("등록된 사이트 없음")
-    for s in sites:
-        sid = s.get("site_id", "")
-        active = str(s.get("status", "")).lower() == "active"
-        icon = "🟢" if active else "⚪"
-        with st.expander(f"{icon} {s.get('site_name','(이름없음)')} — {s.get('domain','')} "
-                         f"[{s.get('site_type','')}] ({s.get('status','')})"):
-            e1, e2 = st.columns(2)
-            new_name = e1.text_input("사이트명", value=s.get("site_name", ""), key=f"ed_name_{sid}")
-            new_dom  = e2.text_input("도메인", value=s.get("domain", ""), key=f"ed_dom_{sid}")
-            new_cat  = st.text_input("카테고리", value=s.get("site_tags", ""), key=f"ed_cat_{sid}")
-            from datetime import datetime as _dt, timedelta as _td
-            status_l = str(s.get("status", "")).lower()
-            archived = status_l == "archived"
-            b1, b2, b3 = st.columns(3)
-            if b1.button("💾 수정 저장", key=f"ed_save_{sid}"):
-                ok, msg = SW.update_site(cfg, sid, {
-                    "site_name": new_name, "domain": new_dom, "site_tags": new_cat})
-                (st.success if ok else st.error)(msg)
-                if ok: st.rerun()
-            if not archived:
-                toggle_label = "⏸ 비활성화" if active else "▶ 활성화"
-                if b2.button(toggle_label, key=f"ed_tog_{sid}"):
-                    ok, msg = SW.set_site_status(cfg, sid, "inactive" if active else "active")
-                    (st.success if ok else st.error)(msg)
-                    if ok: st.rerun()
-                if b3.button("🗑️ 삭제(보관 이동)", key=f"ed_arch_{sid}"):
-                    ok, msg = SW.update_site(cfg, sid, {
-                        "status": "archived", "deleted_at": _dt.now().isoformat()})
-                    (st.success if ok else st.error)(
-                        "보관함으로 이동됨 — 보관기간 내 복구 가능" if ok else msg)
-                    if ok: st.rerun()
-            else:
-                ret_days = int(cfg.get("SITE_RETENTION_DAYS", 30) or 30)
-                da = s.get("deleted_at", "")
-                expired, exp_txt = False, "-"
-                try:
-                    exp = _dt.fromisoformat(da) + _td(days=ret_days)
-                    expired = _dt.now() > exp
-                    exp_txt = exp.strftime("%Y-%m-%d")
-                except Exception:
-                    pass
-                st.warning(f"📦 보관됨 (삭제예정 {exp_txt}, 보관 {ret_days}일)"
-                           + (" · ⚠️ 보관기간 만료 — 영구삭제 가능" if expired else ""))
-                if b2.button("♻️ 복구", key=f"ed_restore_{sid}"):
-                    ok, msg = SW.update_site(cfg, sid, {"status": "inactive", "deleted_at": ""})
-                    (st.success if ok else st.error)("복구됨(비활성 상태)" if ok else msg)
-                    if ok: st.rerun()
-                with b3:
-                    conf = st.text_input('영구삭제: "DELETE" 입력', key=f"ed_delconf_{sid}")
-                    if st.button("⛔ 영구 삭제", key=f"ed_perm_{sid}"):
-                        if conf.strip() == "DELETE":
-                            ok, msg = SW.delete_site(cfg, sid)
-                            (st.success if ok else st.error)(msg)
-                            if ok: st.rerun()
-                        else:
-                            st.error('"DELETE"를 정확히 입력해야 합니다.')
-            # ── 📑 복제(Clone) — 인라인 프리필 폼 ──
-            with st.expander("📑 복제(Clone)"):
-                cl_name = st.text_input("새 사이트명 *", value=f"{s.get('site_name','')} (복사본)",
-                                        key=f"cl_name_{sid}")
-                cl_dom = st.text_input("새 도메인 *", value="", key=f"cl_dom_{sid}")
-                spec_lbl = next((k for k, v in SW.TYPE_DEFS.items()
-                                 if v["site_type"] == s.get("site_type", "custom")), "사용자정의")
-                cwu = cwz = cwp = ""
-                if SW.TYPE_DEFS[spec_lbl]["needs_wp"]:
-                    st.caption("이 유형은 WordPress 자격증명이 필요합니다(복제 시 재입력).")
-                    cwu = st.text_input("WordPress URL *", key=f"cl_wpurl_{sid}")
-                    cwz = st.text_input("WordPress ID *", key=f"cl_wpuser_{sid}")
-                    cwp = st.text_input("App Password *", type="password", key=f"cl_wppw_{sid}")
-                if st.button("📑 복제 실행", key=f"cl_run_{sid}"):
-                    ok, msg = SW.create_site(cfg, spec_lbl, {
-                        "site_name": cl_name, "domain": cl_dom, "category": s.get("site_tags", ""),
-                        "wp_url": cwu, "wp_user": cwz, "wp_app_password": cwp, "rss_sources": "",
-                        "research_ai": s.get("research_ai", ""), "writing_ai": s.get("writing_ai", ""),
-                        "review_ai": s.get("review_ai", ""),
-                    })
-                    (st.success if ok else st.error)(msg)
-                    if ok:
-                        st.cache_resource.clear(); st.rerun()
-
-    st.divider()
-    # ── 계산기 목록 / 관리 ──
-    st.subheader("🧮 등록된 계산기")
-    try:
-        calcs = SW.list_calculators(cfg)
-    except Exception as e:
-        calcs = []
-        st.error(f"계산기 목록 조회 실패: {e}")
-    if not calcs:
-        st.caption("등록된 계산기 없음")
-    for c in calcs:
-        cid = c.get("id", "")
-        with st.expander(f"🧮 {c.get('name','(이름없음)')} — {c.get('category','')} ({c.get('status','')})"):
-            st.write(c.get("seo_desc", ""))
-            if st.button("🗑️ 삭제", key=f"cdel_{cid}"):
-                ok, msg = SW.delete_calculator(cfg, cid)
-                (st.success if ok else st.error)(msg)
-                if ok: st.rerun()
-
-# ══════════════════════════════════════════════════════════════
-# 탭: 🧮 Calculator Builder (계산기 CRUD — CalculatorRepository 경유)
-# ══════════════════════════════════════════════════════════════
-elif tab == "🧮 Calculator Builder":
-    st.title("🧮 Calculator Builder")
-    st.caption("계산기를 코드 수정 없이 생성/수정/상태변경 (CalculatorRepository 경유)")
-    from adapters.db.factory import get_db_adapter
-    from repositories.calculator_repository import CalculatorRepository
-    repo = CalculatorRepository(get_db_adapter(cfg))
-
-    ab1, ab2 = st.columns(2)
-    if ab1.button("🌱 CalcMate 초기 5종 시드"):
-        try:
-            from modules.calculator_seed import seed_all
-            r = seed_all(cfg)
-            st.success(f"시드 완료 — 템플릿 {r['templates']}, 계산기 {r['calculators']}"); st.rerun()
-        except Exception as e:
-            st.error(f"시드 실패(시트 권한 확인): {e}")
-    if ab2.button("▶ 계산기 글 1건 생성(SEO+CTA)"):
-        try:
-            from modules.calculator_pipeline import run_calculator_once
-            with st.spinner("키워드→SEO→본문→계산기 위젯 생성 중..."):
-                s = run_calculator_once(cfg, max_count=1)
-            st.success(f"생산 {s.get('produced',0)}건 (발행대기 포함). 상세는 작업보드/오류로그 참고.")
-        except Exception as e:
-            st.error(f"생성 실패: {e}")
-
-    # ── 품질보류 재평가(HOLD Re-evaluate) ──────────────────────────
-    # 자동 재평가(품질 서명 변경 시 다음 스케줄에서 자동 재도전)와 별개로, 지금 즉시
-    # "무엇이 재도전 대상인지" 확인/실행하는 운영 도구.
-    with st.expander("♻️ 품질보류 재평가 (legal/게이트/프롬프트 변경 반영)"):
-        st.caption("품질 서명이 바뀐 품질보류 글을 재도전 대상으로 집계합니다. "
-                   "'재평가 확인'은 리포트만(비용 0), '재도전 즉시 실행'은 재생성(API 비용)까지 수행.")
-        rc1, rc2 = st.columns(2)
-        if rc1.button("🔍 재평가 확인 (리포트)", key="reeval_report"):
-            try:
-                from modules.calculator_pipeline import reevaluate_holds
-                res = reevaluate_holds(cfg, apply=False)
-                st.success(f"품질보류 {res['holds']}건 · 재도전 {len(res['released'])}건 · "
-                           f"유지 {len(res['blocked'])}건 · 이미발행(정리대상) {len(res.get('already_published',[]))}건 · "
-                           f"legal 입력필요 {len(res['legal_pending'])}건")
-                if res["released"]:
-                    st.write("**재도전 대상(released):**")
-                    for it in res["released"]:
-                        st.write(f"- {it['name']} (`{it['old']}`→`{it['new']}`)")
-                if res.get("already_published"):
-                    st.write("**이미 발행됨(옛 HOLD 정리 대상 — '재도전 즉시 실행' 시 재처리완료):**")
-                    for it in res["already_published"]:
-                        st.write(f"- {it['name']}")
-                if res["legal_pending"]:
-                    st.write("**legal_basis 입력 필요:**")
-                    for it in res["legal_pending"]:
-                        st.write(f"- {it['name']} (slug=`{it['slug']}`)")
-            except Exception as e:
-                st.error(f"재평가 실패: {e}")
-        if rc2.button("▶ 재도전 즉시 실행 (재생성)", key="reeval_apply"):
-            try:
-                from modules.calculator_pipeline import reevaluate_holds
-                with st.spinner("재도전 대상 재생성 중(키워드→SEO→본문→품질검수)..."):
-                    res = reevaluate_holds(cfg, apply=True)
-                st.success(f"재도전 {len(res['released'])}건 → 생산 {res.get('produced',0)}건 · "
-                           f"옛 HOLD 정리(재처리완료) {res.get('resolved',0)}건. 상세는 작업보드/오류로그 참고.")
-            except Exception as e:
-                st.error(f"재생성 실패: {e}")
-    st.divider()
-    try:
-        calcs = repo.get_all()
-    except Exception as e:
-        calcs = []
-        st.error(f"계산기 목록 조회 실패(시트 권한 확인): {e}")
-
-    options = ["+ 신규 생성"] + [f"{c.get('name','?')} ({c.get('id','')})" for c in calcs]
-    sel = st.selectbox("대상 선택", options, key="cb_sel")
-    editing = calcs[options.index(sel) - 1] if sel != "+ 신규 생성" else None
-
-    def _v(k, d=""):
-        return (editing or {}).get(k, d)
-
-    c1, c2 = st.columns(2)
-    name = c1.text_input("계산기명 *", value=_v("name"), key="cb_name")
-
-    # Slug 자동생성: 편집 대상 전환 시 리셋, 신규 생성 + 공백이면 이름에서 자동생성
-    _cb_editing_id = (editing or {}).get("id") or "__new__"
-    if st.session_state.get("_cb_prev_editing_id") != _cb_editing_id:
-        st.session_state["_cb_prev_editing_id"] = _cb_editing_id
-        st.session_state["cb_slug"] = _v("slug")
-    if not editing and not st.session_state.get("cb_slug") and name:
-        _auto = generate_slug(name)
-        if _auto:
-            st.session_state["cb_slug"] = _auto
-
-    slug = c2.text_input("slug (자동생성 — 수정 가능)", key="cb_slug")
-    c3, c4 = st.columns(2)
-    category = c3.text_input("category", value=_v("category"), key="cb_cat")
-    ctype = c4.text_input("calculator_type", value=_v("calculator_type", "general"), key="cb_type")
-    seo_title = st.text_input("seo_title", value=_v("seo_title"), key="cb_st")
-    seo_desc = st.text_area("seo_desc", value=_v("seo_desc"), key="cb_sd")
-    formula = st.text_area("formula", value=_v("formula"), key="cb_f")
-    faq = st.text_area("faq", value=_v("faq"), key="cb_faq")
-    insch = st.text_area("input_schema (JSON)",
-                         value=_v("input_schema", '{"hourly_wage":"number","weekly_hours":"number"}'), key="cb_in")
-    outsch = st.text_area("output_schema (JSON)",
-                          value=_v("output_schema", '{"weekly_allowance":"number"}'), key="cb_out")
-    stt = _v("status", "draft")
-    status = st.selectbox("status", ["draft", "active", "inactive"],
-                          index=["draft", "active", "inactive"].index(stt) if stt in ["draft", "active", "inactive"] else 0,
-                          key="cb_status")
-    if st.button("💾 저장", type="primary", key="cb_save"):
-        if not name.strip():
-            st.error("계산기명은 필수입니다.")
-        else:
-            row = {"name": name, "slug": slug, "category": category, "calculator_type": ctype,
-                   "seo_title": seo_title, "seo_desc": seo_desc, "formula": formula, "faq": faq,
-                   "input_schema": insch, "output_schema": outsch, "status": status}
-            try:
-                if editing:
-                    repo.update(editing.get("id"), row); st.success("✅ 수정 완료")
-                else:
-                    repo.save(row); st.success("✅ 생성 완료")
-                st.rerun()
-            except Exception as e:
-                st.error(f"저장 실패(시트 권한 확인): {e}")
-    if editing:
-        st.divider(); st.caption(f"상태 변경 (현재: {editing.get('status')})")
-        sc = st.columns(3)
-        for i, s in enumerate(["draft", "active", "inactive"]):
-            if sc[i].button(f"→ {s}", key=f"cb_s_{s}"):
-                try:
-                    repo.update(editing.get("id"), {"status": s}); st.success(f"상태 → {s}"); st.rerun()
-                except Exception as e:
-                    st.error(f"실패: {e}")
-
-# ══════════════════════════════════════════════════════════════
-# 탭: 🧮 계산기 관리 (앱 생성 + GitHub Pages 배포)
-# ══════════════════════════════════════════════════════════════
 elif tab == "🧮 계산기 관리":
     st.title("🧮 계산기 관리")
     st.caption("계산기 메타데이터로 정적 앱(HTML/CSS/JS) 생성 → GitHub Pages 배포 → URL/상태 관리. (모든 접근 Repository 경유)")
-    from adapters.db.factory import get_db_adapter
+    from adapters.db.factory import get_calculator_storage_adapter
     from repositories.calculator_repository import CalculatorRepository
     from modules import app_generator as AG, github_deployer as GH, formula_engine as FE
     from modules import app_factory as AF_CM
     from modules.registry_loader import load_registry_v3 as _load_v3
-    repo = CalculatorRepository(get_db_adapter(cfg))
+    repo = CalculatorRepository(get_calculator_storage_adapter(cfg))
     _v3_reg = _load_v3(force=True)
 
     if st.button("🌱 기본 계산기 5종 시드"):
@@ -1592,12 +1506,15 @@ elif tab == "🧮 계산기 관리":
     st.caption("배포 설정: " + ("✅ GITHUB_TOKEN 있음" if GH.is_configured(cfg)
                else "⚠️ GITHUB_TOKEN 미설정 — 배포 비활성(로컬 미리보기만 가능)"))
     try:
-        calcs = repo.get_all()
+        # STEP 28-218: Golden10 documents/howto 콘텐츠(calculators 테이블에 저장되지만
+        # Registry v3에는 등록되지 않음)가 계산기 관리 화면에 섞여 나오지 않도록,
+        # 실제 Registry v3에 등록된 slug만 표시한다(원본 DB 데이터는 그대로 보존).
+        calcs = [c for c in repo.get_all() if c.get("slug") in _v3_reg]
     except Exception as e:
         calcs = []
         st.error(f"계산기 조회 실패(시트 권한 확인): {e}")
     if not calcs:
-        st.info("등록된 계산기 없음 — 위 시드 버튼 또는 🧮 Calculator Builder / 🏭 App Factory로 등록")
+        st.info("등록된 계산기 없음 — 위 시드 버튼 또는 🏭 App Factory로 등록")
 
     def _inline(files):
         # 공통 렌더 함수 1개 공유(대시보드 미리보기 = WordPress 삽입 동일 산출물)
@@ -1734,41 +1651,61 @@ elif tab == "🧮 계산기 관리":
             # ── AI 자동 생성 ──
             st.markdown("**🤖 AI 자동 생성**")
             g = st.columns(5)
+            # STEP 28-222: auto_generate_all()은 is_golden10() 체크로 Golden10 콘텐츠의
+            # DB 저장을 자체 차단하지만(content/calculator/writer.py), 아래 개별 4개
+            # 버튼은 그 체크를 거치지 않고 곧바로 repo.update_generated()를 호출해
+            # 방어 계층이 비대칭이었다(STEP 28-221 발견). 기존 is_golden10()을 그대로
+            # 재사용해 개별 버튼에도 동일한 차단을 적용한다 — 생성기/writer.py/저장
+            # 함수 자체는 변경하지 않는다.
+            from content.blog import is_golden10 as _is_golden10
+            _slug_g10 = _is_golden10(c.get("slug", ""))
             if g[0].button("SEO 생성", key=f"ag_seo_{cid}"):
-                from modules import calculator_seo_generator as SEO
-                with st.spinner("SEO 생성 중..."):
-                    repo.update_generated(cid, {"seo_title": SEO.generate_seo_title(cfg, c),
-                                                "seo_description": SEO.generate_meta_description(cfg, c)})
-                st.success("SEO 생성·저장"); st.rerun()
+                if _slug_g10:
+                    st.warning("🔒 Golden10 보호 콘텐츠 — SEO 자동 생성/저장이 차단되었습니다.")
+                else:
+                    from modules import calculator_seo_generator as SEO
+                    with st.spinner("SEO 생성 중..."):
+                        repo.update_generated(cid, {"seo_title": SEO.generate_seo_title(cfg, c),
+                                                    "seo_description": SEO.generate_meta_description(cfg, c)})
+                    st.success("SEO 생성·저장"); st.rerun()
             if g[1].button("FAQ 생성", key=f"ag_faq_{cid}"):
-                from modules.calculator_faq_generator import generate_faq
-                import json as _j
-                with st.spinner("FAQ 생성 중..."):
-                    repo.update_generated(cid, {"faq": _j.dumps(generate_faq(cfg, c), ensure_ascii=False)})
-                st.success("FAQ 생성·저장"); st.rerun()
+                if _slug_g10:
+                    st.warning("🔒 Golden10 보호 콘텐츠 — FAQ 자동 생성/저장이 차단되었습니다.")
+                else:
+                    from modules.calculator_faq_generator import generate_faq
+                    import json as _j
+                    with st.spinner("FAQ 생성 중..."):
+                        repo.update_generated(cid, {"faq": _j.dumps(generate_faq(cfg, c), ensure_ascii=False)})
+                    st.success("FAQ 생성·저장"); st.rerun()
             if g[2].button("본문 생성", key=f"ag_art_{cid}"):
-                from modules.calculator_content_generator import generate_article
-                # STEP 28-37: DB 저장 직전 SSOT 법정수치 검증(논블로킹 warning — 저장은 계속 진행).
-                # STEP 28-26에서 만든 기존 헬퍼를 그대로 재사용(신규 파서 없음).
-                from modules.calculator_pipeline import _check_legal_current_before_save
-                # STEP 28-52: 콘텐츠 SSOT 추적 필드 — 기존 게이트를 내부에서 재사용하는 공통 helper.
-                from modules.content_integrity import build_content_tracking_fields
-                with st.spinner("본문 생성 중..."):
-                    article = generate_article(cfg, c)
-                    _check_legal_current_before_save(article, c.get("slug", ""), cid)
-                    try:
-                        _tracking_fields = build_content_tracking_fields(
-                            article, c.get("slug", ""), "dashboard_manual")
-                    except Exception:
-                        _tracking_fields = {}
-                    repo.update_generated(cid, {"article_content": article, **_tracking_fields})
-                st.success("본문 생성·저장"); st.rerun()
+                if _slug_g10:
+                    st.warning("🔒 Golden10 보호 콘텐츠 — 본문 자동 생성/저장이 차단되었습니다.")
+                else:
+                    from modules.calculator_content_generator import generate_article
+                    # STEP 28-37: DB 저장 직전 SSOT 법정수치 검증(논블로킹 warning — 저장은 계속 진행).
+                    # STEP 28-26에서 만든 기존 헬퍼를 그대로 재사용(신규 파서 없음).
+                    from modules.calculator_pipeline import _check_legal_current_before_save
+                    # STEP 28-52: 콘텐츠 SSOT 추적 필드 — 기존 게이트를 내부에서 재사용하는 공통 helper.
+                    from modules.content_integrity import build_content_tracking_fields
+                    with st.spinner("본문 생성 중..."):
+                        article = generate_article(cfg, c)
+                        _check_legal_current_before_save(article, c.get("slug", ""), cid)
+                        try:
+                            _tracking_fields = build_content_tracking_fields(
+                                article, c.get("slug", ""), "dashboard_manual")
+                        except Exception:
+                            _tracking_fields = {}
+                        repo.update_generated(cid, {"article_content": article, **_tracking_fields})
+                    st.success("본문 생성·저장"); st.rerun()
             if g[3].button("이미지 프롬프트", key=f"ag_img_{cid}"):
-                from modules import calculator_image_prompt_generator as IMG
-                with st.spinner("이미지 프롬프트 생성 중..."):
-                    repo.update_generated(cid, {"image_prompt_thumbnail": IMG.generate_thumbnail_prompt(cfg, c),
-                                                "image_prompt_body": IMG.generate_body_prompt(cfg, c)})
-                st.success("이미지 프롬프트 생성·저장"); st.rerun()
+                if _slug_g10:
+                    st.warning("🔒 Golden10 보호 콘텐츠 — 이미지 프롬프트 생성/저장이 차단되었습니다.")
+                else:
+                    from modules import calculator_image_prompt_generator as IMG
+                    with st.spinner("이미지 프롬프트 생성 중..."):
+                        repo.update_generated(cid, {"image_prompt_thumbnail": IMG.generate_thumbnail_prompt(cfg, c),
+                                                    "image_prompt_body": IMG.generate_body_prompt(cfg, c)})
+                    st.success("이미지 프롬프트 생성·저장"); st.rerun()
             if g[4].button("⚡ 전체 자동생성", key=f"ag_all_{cid}", type="primary"):
                 from modules.calculator_content_generator import auto_generate_all
                 with st.spinner("SEO→FAQ→본문→이미지→저장 진행 중... (수십 초)"):
@@ -2334,7 +2271,7 @@ elif tab == "🏭 App Factory":
             _tier = st.session_state.get("af_tier", 2)
             try:
                 from repositories.calculator_repository import CalculatorRepository as _CR
-                from adapters.db.factory import get_db_adapter as _gda
+                from adapters.db.factory import get_calculator_storage_adapter as _gda
                 _existing = _CR(_gda(cfg)).get_all()
             except Exception:
                 _existing = []
@@ -3359,79 +3296,6 @@ elif tab == "🔧 설정":
             tg_events[_k] = bool(_ecols[_i].toggle(_lbl, value=bool(_ev_def.get(_k, True)), key=f"s_tgev_{_k}"))
         st.caption("telegram_ops 경유 이벤트에 적용. 파이프라인 크리티컬 알림(오류/예산/헬스)은 항상 발송.")
 
-    # ── 🎨 계산기 노출 설정 (Design v2) — SM_CONFIG 연동 ──
-    with st.expander("🎨 계산기 노출 설정 (v2)"):
-        st.caption("생성되는 계산기 앱의 노출/정책. 저장 시 config.yaml에 반영되어 재생성물에 적용됩니다. (UI/계산식 무변경)")
-        _SITE_MODES = ["pre_adsense", "adsense", "cpa", "full"]
-        _cur_sm = cfg.get("SITE_MODE", "pre_adsense")
-        v2_site = st.selectbox("SITE_MODE", _SITE_MODES,
-                               index=_SITE_MODES.index(_cur_sm) if _cur_sm in _SITE_MODES else 0,
-                               help="pre_adsense=광고/CPA off · adsense=광고 · cpa=CPA · full=둘 다")
-        _c = st.columns(3)
-        v2_share = _c[0].toggle("SHOW_SHARE", value=bool(cfg.get("SHOW_SHARE", True)), key="v2_share")
-        v2_pwa = _c[1].toggle("SHOW_PWA", value=bool(cfg.get("SHOW_PWA", True)), key="v2_pwa")
-        v2_save = _c[2].toggle("SHOW_RESULT_SAVE", value=bool(cfg.get("SHOW_RESULT_SAVE", True)), key="v2_save")
-        _c2 = st.columns(3)
-        v2_faq = _c2[0].toggle("SHOW_FAQ", value=bool(cfg.get("SHOW_FAQ", True)), key="v2_faq")
-        v2_notice = _c2[1].toggle("SHOW_NOTICE", value=bool(cfg.get("SHOW_NOTICE", True)), key="v2_notice")
-        v2_related = _c2[2].toggle("SHOW_RELATED", value=bool(cfg.get("SHOW_RELATED", True)), key="v2_related")
-        _c3 = st.columns(3)
-        v2_detail = _c3[0].toggle("SHOW_DETAIL", value=bool(cfg.get("SHOW_DETAIL", True)), key="v2_detail")
-        v2_ads = _c3[1].toggle("SHOW_ADSENSE(오버라이드)", value=bool(cfg.get("SHOW_ADSENSE", False)), key="v2_ads")
-        v2_cpa = _c3[2].toggle("SHOW_CPA(오버라이드)", value=bool(cfg.get("SHOW_CPA", False)), key="v2_cpa")
-        _c4 = st.columns(2)
-        _EXP = ["png", "pdf", "both", "none"]
-        _cur_exp = cfg.get("RESULT_EXPORT_TYPE", "png")
-        v2_exp = _c4[0].selectbox("RESULT_EXPORT_TYPE", _EXP,
-                                  index=_EXP.index(_cur_exp) if _cur_exp in _EXP else 0,
-                                  help="현재 png만 구현. pdf/both/none은 구조만 준비.")
-        v2_kakao = _c4[1].text_input("KAKAO_JS_KEY", value=cfg.get("KAKAO_JS_KEY", ""),
-                                     help="카카오 JS 키(클라이언트용). 입력 시 카카오 공유 SDK 연동 준비.")
-        _c5 = st.columns(2)
-        v2_calcver = _c5[0].text_input("CALCULATOR_VERSION", value=cfg.get("CALCULATOR_VERSION", "2.0.0"))
-        v2_lawver = _c5[1].text_input("LAW_VERSION", value=cfg.get("LAW_VERSION", "2026-07"))
-        if st.button("💾 계산기 노출 설정 저장", key="v2_save_btn"):
-            _p = BASE / "config" / "config.yaml"
-            with open(_p, encoding="utf-8") as f:
-                _raw = yaml.safe_load(f) or {}
-            _raw.update({
-                "SITE_MODE": v2_site,
-                "SHOW_ADSENSE": bool(v2_ads), "SHOW_CPA": bool(v2_cpa),
-                "SHOW_SHARE": bool(v2_share), "SHOW_PWA": bool(v2_pwa),
-                "SHOW_RESULT_SAVE": bool(v2_save), "SHOW_FAQ": bool(v2_faq),
-                "SHOW_NOTICE": bool(v2_notice), "SHOW_RELATED": bool(v2_related),
-                "SHOW_DETAIL": bool(v2_detail),
-                "RESULT_EXPORT_TYPE": v2_exp, "KAKAO_JS_KEY": v2_kakao.strip(),
-                "CALCULATOR_VERSION": v2_calcver.strip(), "LAW_VERSION": v2_lawver.strip(),
-            })
-            with open(_p, "w", encoding="utf-8") as f:
-                yaml.dump(_raw, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
-            st.success("✅ 저장 완료. 계산기 재생성 시 SM_CONFIG에 반영됩니다.")
-            st.cache_resource.clear()
-
-    # ── AI 역할 체계 (확장 기능 전용 — 기존 파이프라인 모델과 별개) ──
-    with st.expander("🧠 AI 역할 체계 (AI Workspace / App Factory 용)", expanded=False):
-        st.caption("총괄/리서치/코드/작성/검수/이미지 역할별 모델. 기존 ORCHESTRATOR/PLANNER/WRITER/EDITOR 설정과 별개로 동작합니다.")
-        from modules.ai_roles import ROLE_DEFS, get_role
-        providers_list2 = ["openai", "claude", "gemini"]
-        role_inputs = {}
-        for rk, base in ROLE_DEFS.items():
-            cur_p, cur_m = get_role(cfg, rk)
-            st.markdown(f"**{base['label']}** — {base['desc']}")
-            rc1, rc2 = st.columns(2)
-            pv = rc1.selectbox(f"{rk} provider", providers_list2,
-                               index=providers_list2.index(cur_p) if cur_p in providers_list2 else 0,
-                               key=f"role_p_{rk}", label_visibility="collapsed")
-            mv = rc2.text_input(f"{rk} model", value=cur_m, key=f"role_m_{rk}", label_visibility="collapsed")
-            role_inputs[rk] = {"provider": pv, "model": mv}
-        if st.button("💾 AI 역할 저장", key="save_roles"):
-            with open(cfg_path, encoding="utf-8") as f:
-                raw = yaml.safe_load(f) or {}
-            raw["AI_ROLES"] = role_inputs
-            with open(cfg_path, "w", encoding="utf-8") as f:
-                yaml.dump(raw, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
-            st.success("✅ AI 역할 저장 완료")
-            st.cache_resource.clear()
 
     # ── AI 점수 가중치 슬라이더 편집기 (score_weights.yaml) ──
     with st.expander("⚖️ AI 점수 가중치 (score_weights.yaml)", expanded=False):
@@ -3653,4 +3517,10 @@ elif tab == "📡 실시간 로그":
     else:
         if st.button("🔄 새로고침"):
             st.rerun()
-        _render_log()
+
+# ══════════════════════════════════════════════════════════════
+# 탭: 🔁 동기화 복구 (STEP61) — pending_sync 큐 조회 + 개별 수동 Retry
+# Dashboard → retry_pending_sync() → 기존 retry engine → 기존 Adapter.
+# Dashboard는 SQLite/Sheets를 직접 수정하지 않는다(SQLiteAdapter/SheetsAdapter/
+# DualAdapter를 여기서 import하지 않음).
+# ══════════════════════════════════════════════════════════════

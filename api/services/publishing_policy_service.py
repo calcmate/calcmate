@@ -12,6 +12,7 @@ config.yaml 조회/저장 자체(ALLOWED_SECTIONS 화이트리스트, 원자적 
 api.services.config_service.ConfigService에 위임한다 — 이 파일에서 config.yaml을
 직접 열거나 쓰지 않는다.
 """
+from copy import deepcopy
 from datetime import date, timedelta
 
 from modules import publishing_policy as PP
@@ -29,6 +30,19 @@ def get_policy() -> dict:
     PP.DEFAULT_POLICY를 그대로 재사용)."""
     section = ConfigService().get_section("PUBLISHING_POLICY")
     return section if section else PP.DEFAULT_POLICY
+
+
+def get_policy_with_source() -> tuple[dict, str]:
+    """GET 응답 전용: (policy 복사본, "config" | "default").
+
+    config.yaml에 PUBLISHING_POLICY가 없거나 비어 있으면 DEFAULT_POLICY의 deepcopy와
+    "default"를 돌려준다 — Dashboard가 "저장된 정책 없음(기본값 표시)"을 구분할 수
+    있게 하기 위함. 반환값은 항상 복사본이므로 호출부가 키를 추가해도
+    PP.DEFAULT_POLICY 원본은 변하지 않는다. get_policy()/preview/PATCH는 무변경."""
+    section = ConfigService().get_section("PUBLISHING_POLICY")
+    if section:
+        return dict(section), "config"
+    return deepcopy(PP.DEFAULT_POLICY), "default"
 
 
 def patch_policy(policy: dict) -> dict:

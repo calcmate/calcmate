@@ -185,6 +185,64 @@ def patch_image_google_settings(
     return ok(result)
 
 
+class CalculatorDisplaySettingsUpdate(BaseModel):
+    """부분 업데이트(PATCH) 전용. 필드를 아예 보내지 않으면(None) 변경하지
+    않는다. 명시적으로 빈 문자열을 보내면 그 값(빈 문자열)으로 저장한다.
+    허용하지 않은 필드는 422로 거부한다(extra="forbid")."""
+    model_config = ConfigDict(extra="forbid")
+
+    site_mode: Literal["pre_adsense", "adsense", "cpa", "full"] | None = None
+    show_share: bool | None = None
+    show_pwa: bool | None = None
+    show_result_save: bool | None = None
+    show_faq: bool | None = None
+    show_notice: bool | None = None
+    show_related: bool | None = None
+    show_detail: bool | None = None
+    show_adsense: bool | None = None
+    show_cpa: bool | None = None
+    result_export_type: Literal["png", "pdf", "both", "none"] | None = None
+    kakao_js_key: str | None = None
+    calculator_version: str | None = None
+    law_version: str | None = None
+
+
+@router.get("/calculator-display")
+def get_calculator_display_settings(user: CurrentUser = Depends(require_admin)):
+    return ok(ConfigService().get_calculator_display_settings())
+
+
+@router.patch("/calculator-display")
+def patch_calculator_display_settings(
+    body: CalculatorDisplaySettingsUpdate,
+    user: CurrentUser = Depends(require_admin),
+):
+    data = body.model_dump(exclude_unset=True, exclude_none=True)
+    updates = {}
+    field_map = {
+        "site_mode": "SITE_MODE",
+        "show_share": "SHOW_SHARE",
+        "show_pwa": "SHOW_PWA",
+        "show_result_save": "SHOW_RESULT_SAVE",
+        "show_faq": "SHOW_FAQ",
+        "show_notice": "SHOW_NOTICE",
+        "show_related": "SHOW_RELATED",
+        "show_detail": "SHOW_DETAIL",
+        "show_adsense": "SHOW_ADSENSE",
+        "show_cpa": "SHOW_CPA",
+        "result_export_type": "RESULT_EXPORT_TYPE",
+        "kakao_js_key": "KAKAO_JS_KEY",
+        "calculator_version": "CALCULATOR_VERSION",
+        "law_version": "LAW_VERSION",
+    }
+    for field, value in data.items():
+        if field in field_map:
+            updates[field_map[field]] = value
+
+    result = ConfigService().patch_calculator_display_settings(updates)
+    return ok(result)
+
+
 @router.get("/{section}")
 def get_settings_section(section: str):
     try:

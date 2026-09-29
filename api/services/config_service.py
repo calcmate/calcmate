@@ -102,6 +102,31 @@ _IMAGE_GOOGLE_DEFAULTS = {
 }
 
 
+
+
+# STEP 18-C: Calculator Display Settings 전용 (STEP 18-C)
+# dashboard.py "🎨 계산기 노출 설정 (v2)"(3586-3634)의 14개 필드 전용.
+# 전부 config.yaml top-level 평범한 값이며 secret이 아니다.
+CALCULATOR_DISPLAY_FIELDS = (
+    "SITE_MODE",
+    "SHOW_SHARE",
+    "SHOW_PWA",
+    "SHOW_RESULT_SAVE",
+    "SHOW_FAQ",
+    "SHOW_NOTICE",
+    "SHOW_RELATED",
+    "SHOW_DETAIL",
+    "SHOW_ADSENSE",
+    "SHOW_CPA",
+    "RESULT_EXPORT_TYPE",
+    "KAKAO_JS_KEY",
+    "CALCULATOR_VERSION",
+    "LAW_VERSION",
+)
+
+_SITE_MODE_CHOICES = ("pre_adsense", "adsense", "cpa", "full")
+_RESULT_EXPORT_TYPE_CHOICES = ("png", "pdf", "both", "none")
+
 class ConfigSectionNotAllowed(Exception):
     """allowlist에 없는 section을 요청한 경우."""
 
@@ -280,6 +305,28 @@ class ConfigService:
                 text = yaml.dump(raw, allow_unicode=True, default_flow_style=False, sort_keys=False)
                 self._atomic_write(text)
             return self.get_image_google_settings()
+
+    def get_calculator_display_settings(self) -> dict:
+        """dashboard.py "🎨 계산기 노출 설정 (v2)"(3586-3634) 조회.
+        14개 필드 전부 config.yaml top-level 평범한 값이며 secret이 아니므로
+        원문 그대로 반환한다(마스킹 대상 아님)."""
+        raw = self._load_raw()
+        return {key: raw.get(key) for key in CALCULATOR_DISPLAY_FIELDS}
+
+    def patch_calculator_display_settings(self, updates: dict) -> dict:
+        """updates에 있는 키(None이 아닌 값)만 부분 업데이트한다 — 빈 문자열도
+        명시적 변경으로 저장한다(원본이 텍스트 입력을 비우면 그대로 빈 문자열을
+        저장하는 것과 동일한 의미론). _load_raw()로 기존 config.yaml 전체를 읽고
+        대상 14개 키만 덮어써 나머지 키는 완전히 보존한 뒤,
+        이미 검증된 _atomic_write()(임시파일→rename 원자적 교체)로 저장한다."""
+        with _CONFIG_WRITE_LOCK:
+            public_updates = {k: v for k, v in updates.items() if k in CALCULATOR_DISPLAY_FIELDS and v is not None}
+            if public_updates:
+                raw = self._load_raw()
+                raw.update(public_updates)
+                text = yaml.dump(raw, allow_unicode=True, default_flow_style=False, sort_keys=False)
+                self._atomic_write(text)
+            return self.get_calculator_display_settings()
 
     def _atomic_write(self, text: str):
         tmp_path = self._config_path.with_name(self._config_path.name + ".tmp")

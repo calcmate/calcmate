@@ -38,9 +38,13 @@ class AutoPublishing(BaseModel):
 
 @router.get("/publishing-policy")
 def get_publishing_policy():
-    """PUBLISHING_POLICY 조회 (인증 불필요 — 기존 GET 조회 endpoint 정책과 동일)."""
-    policy = pps.get_policy()
-    return ok(policy)
+    """PUBLISHING_POLICY 조회 (인증 불필요 — 기존 GET 조회 endpoint 정책과 동일).
+
+    기존 필드에 source("config" | "default")만 추가한다 — 저장된 정책이 없어
+    DEFAULT_POLICY를 보여주는 상태를 Dashboard가 구분하도록. preview/PATCH 응답에는
+    넣지 않는다(validate_policy의 최상위 키 계약 보호)."""
+    policy, source = pps.get_policy_with_source()
+    return ok({**policy, "source": source})
 
 
 @router.patch("/publishing-policy")
