@@ -32,8 +32,12 @@ def _di_orchestrator():
     return ContentPipelineOrchestrator(gate=PublishGate(publisher=NullPublisher()))
 
 
-def test_pipeline_default_run_zero_remote_post():
+def test_pipeline_default_run_zero_remote_post(monkeypatch):
     """기본 생성(ContentPipelineOrchestrator()) 만으로 전체 pipeline을 실행해도 원격 POST가 0회여야 한다."""
+    # P0-4: engine_adapter.py가 auto_generate_all({}, ...)을 빈 cfg로 호출한다 — 제거된
+    # 하드코딩 mock(cross-calculator contamination 버그)에 암묵적으로 의존하고 있었으므로
+    # 더미 본문으로 대체한다(이 테스트의 목적은 원격 POST 0회 확인이지 AI 호출 검증이 아님).
+    monkeypatch.setattr("content.calculator.writer.generate_article", lambda *a, **kw: "<p>dummy</p>")
     orchestrator = ContentPipelineOrchestrator()  # DI 인자 없음 — 기본값 자체가 안전해야 함
     assert isinstance(orchestrator.gate.publisher, NullPublisher)
     with patch.object(orchestrator.adapter, "run_h4a_quality", return_value={"status": "PASS", "data": {}}):

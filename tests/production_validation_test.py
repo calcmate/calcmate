@@ -7,9 +7,14 @@ from content_pipeline.publisher_base import NullPublisher
 from unittest.mock import patch, MagicMock
 
 @pytest.fixture
-def orchestrator():
+def orchestrator(monkeypatch):
     # DI: 실제 WordPressPublisher 대신 NullPublisher를 명시적으로 주입한다.
     # (원격 blog.genon.app에는 애초에 접근할 수 없는 구조)
+    # P0-4: content_pipeline/engine_adapter.py가 auto_generate_all({}, ...)을 빈 cfg로
+    # 호출한다 — 제거된 하드코딩 mock(cross-calculator contamination 버그)에 암묵적으로
+    # 의존하고 있었으므로, 이 orchestrator 단계-전이 테스트 목적에 맞게 더미 본문으로
+    # 대체한다(실제 AI 호출 없음).
+    monkeypatch.setattr("content.calculator.writer.generate_article", lambda *a, **kw: "<p>dummy</p>")
     return ContentPipelineOrchestrator(gate=PublishGate(publisher=NullPublisher()))
 
 CALCULATORS = [

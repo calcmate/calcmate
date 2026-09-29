@@ -190,3 +190,12 @@ def test_generate_faq_positional_and_keyword_calls_both_work(monkeypatch):
     faq_mod.generate_faq({}, _FAKE_CALC, example_context=ctx)
 
     assert calls == [None, None, ctx]
+
+
+# ── CALCMATE-BLOG-FORMULA-PRESENTATION-IMPLEMENT-01: FAQ 경로도 동일 지시 적용 ──
+
+def test_faq_prompt_includes_formula_presentation_rule():
+    _, user = PM.get_faq_prompt(_FAKE_CALC, 6, 8)
+    assert "계산공식(내부 실행식 — 참고용, 본문·FAQ에 그대로 노출 금지)" in user
+    assert PM.FORMULA_PRESENTATION_RULE in user
+    assert _FAKE_CALC["formula"] in user

@@ -227,7 +227,14 @@ def test_round_unused_calculators_unaffected():
     """DB의 모든 계산기 중 bmi-calculator를 제외한 전부는 formula에
     round(x,N) 2-인자 호출이 없어야 하며(STEP 28-139에서 확인된 사실),
     실제 _compute_js() 생성 결과에 pyRound가 등장하지 않아야 한다 —
-    즉 이번 변경이 이들에게는 완전한 no-op임을 실제 생성 결과로 확인한다."""
+    즉 이번 변경이 이들에게는 완전한 no-op임을 실제 생성 결과로 확인한다.
+
+    자동차_취등록세_계산기는 예외다(STEP 28-193/196): slug 조건부 완전
+    커스텀 분기에서 원(₩) 단위 반올림 오차 제거를 위해 pyRound를 정당하게
+    사용하는 두 번째 사례이며(BMI와 마찬가지로 formula 필드 기반이 아니라
+    코드 분기 기반), "BMI만 pyRound를 쓴다"는 이 테스트의 전제가 STEP
+    28-139 시점의 관찰(당시 사실)이었을 뿐 설계상 불변식이 아니었음이
+    STEP 28-194에서 확인됐다. 다른 계산기에 대한 보호는 그대로 유지한다."""
     from modules.config_loader import load_config
     from adapters.db.factory import get_db_adapter
     from repositories.calculator_repository import CalculatorRepository
@@ -240,7 +247,7 @@ def test_round_unused_calculators_unaffected():
     checked = 0
     for calc in all_calcs:
         slug = calc.get("slug", "")
-        if slug == "bmi-calculator":
+        if slug in ("bmi-calculator", "자동차_취등록세_계산기"):
             continue
         js = _compute_js(calc)
         assert "pyRound" not in js, f"{slug}의 생성 JS에 예상치 못한 pyRound 등장: {js[:200]}"

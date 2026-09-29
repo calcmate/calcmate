@@ -9,8 +9,16 @@ from content_pipeline.publish_gate import PublishGate
 from content_pipeline.publisher_base import NullPublisher
 
 @pytest.fixture
-def orchestrator():
+def orchestrator(monkeypatch):
     # DI: 실제 WordPressPublisher 대신 NullPublisher를 명시적으로 주입한다.
+    # P0-4: content_pipeline/engine_adapter.py::run_content_generation()이
+    # auto_generate_all({}, ...)을 빈 cfg로 호출한다 — 예전에는 OPENAI_API_KEY 부재 시
+    # content/calculator/writer.py::generate_article()이 계산기 종류와 무관한 하드코딩
+    # mock 본문을 반환해 이 빈 cfg 호출도 "성공"으로 흘러갔지만, 그 mock 자체가
+    # cross-calculator contamination 버그였기에 P0-4에서 제거되었다(진짜 예외를 던짐).
+    # 이 테스트 파일들은 실제 AI 호출 여부를 검증하는 게 아니라 orchestrator의 단계별
+    # 상태 전이를 검증하는 것이 목적이므로, 실제 AI 호출 대신 더미 본문으로 대체한다.
+    monkeypatch.setattr("content.calculator.writer.generate_article", lambda *a, **kw: "<p>dummy</p>")
     return ContentPipelineOrchestrator(gate=PublishGate(publisher=NullPublisher()))
 
 def test_pipeline_success(orchestrator):

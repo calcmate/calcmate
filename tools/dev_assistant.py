@@ -76,7 +76,7 @@ LOG_PATH = ROOT / "data" / "logs" / "dev_assistant.jsonl"
 _SYSTEM = """너는 CalcMate(SalaryMate v12) 프로젝트의 보조 개발자다.
 
 [프로젝트 개요]
-- SalaryMate v12: Python/Streamlit 기반 한국 급여·노동법 계산기 플랫폼
+- SalaryMate v12: React/FastAPI + Python 기반 한국 급여·노동법 계산기 플랫폼
 - 핵심 모듈: formula_engine.py, app_factory.py, dashboard.py, ai_provider.py
 - 계약 구조: Formula Lifecycle (not_generated → ai_suggested → pending_validation → operator_confirmed)
 - 주요 계층: Registry(YAML) / Contract Instance(YAML) / App Factory / Formula Engine

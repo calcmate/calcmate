@@ -162,3 +162,30 @@ def test_d2_faq_prompt_does_not_gain_new_format_contract():
     faq_system, _ = get_faq_prompt(_CALC, example_context=_EXAMPLE_CONTEXT)
     assert "[계산 예시 결과값 표기 규칙]" not in faq_system
     assert "소수점 이하를 버리고" not in faq_system
+
+
+# ── CALCMATE-BLOG-FORMULA-PRESENTATION-IMPLEMENT-01: 내부 계산식 노출 방지 지시 ──
+
+def test_e1_article_prompt_marks_formula_as_internal_reference():
+    _, user = get_article_prompt(_CALC, _SEO, _FAQ, _EXAMPLE_CONTEXT, intent="eligibility")
+    assert "계산공식(내부 실행식 — 참고용, 본문·FAQ에 그대로 노출 금지)" in user
+    assert "[계산공식 표기 규칙 — 반드시 준수]" in user
+    assert "clamp(), min(), max()" in user
+    assert "% 형태로 표기" in user
+    # formula 값 자체는 그대로 전달된다(내부 계산 참고용).
+    assert _CALC["formula"] in user
+
+
+def test_e2_article_prompt_keeps_example_and_number_contract():
+    system, user = get_article_prompt(_CALC, _SEO, _FAQ, _EXAMPLE_CONTEXT, intent="eligibility")
+    assert "[계산 예시 작성 규칙 — 반드시 준수]" in system
+    assert "4249315.068493151" in system  # verified_examples 그대로 전달
+    # 숫자를 생략하라는 지시가 아니라 생략·변경 금지 지시만 있어야 한다.
+    assert "계산 예시의 입력값과 결과 숫자는 생략하거나 변경하지 않는다." in user
+    assert "숫자를 생략" not in user.replace("결과 숫자는 생략하거나 변경하지 않는다", "")
+
+
+def test_e3_ssot_block_contract_preserved():
+    system, _ = get_article_prompt(_CALC, _SEO, _FAQ, _EXAMPLE_CONTEXT,
+                                    intent="eligibility", law_ssot_block="[법정수치]\n- X")
+    assert system.startswith("[법정수치]\n- X")

@@ -599,6 +599,53 @@ def test_faq_forbidden_phrase_via_v3_legal_refs(monkeypatch):
 
 
 # ─────────────────────────────────────────────────────────────
+# 7-1. IRP-29 — 자동차_취등록세_계산기 forbidden_phrases 최소 수정 검증
+#
+# IRP-28 진단: docs/legal_master/tax.yaml의 local_tax_act_12.forbidden_phrases가
+# 단어 1개("등록세")라 계산기 자신의 정상 서비스명("취등록세")과 legal_master
+# 자신의 reviewer_expectation이 요구하는 올바른 부정 설명("등록세라는 별도 세목이
+# 존재하지 않는다")까지 걸러내는 과잉 차단이었다. IRP-29에서 문장형 2개
+# ("등록세를 별도로 납부"/"등록세가 별도로 부과")로 교체했다 — 아래는 실제
+# Registry(mock 아님)를 그대로 읽어 검증한다.
+# ─────────────────────────────────────────────────────────────
+
+def _car_tax_forbidden_check(html_fragment: str):
+    from modules.registry_loader import invalidate
+    invalidate()   # 이번 STEP에서 방금 수정한 legal_master 파일을 캐시 없이 새로 읽음
+    return _faq_forbidden_phrase_check({"slug": "자동차_취등록세_계산기"}, html_fragment)
+
+
+def test_a_car_tax_normal_service_name_not_blocked():
+    """Test A — 정상 서비스명 '자동차 취등록세 계산기'는 forbidden phrase에 걸리지 않아야 한다."""
+    (passed, skipped), detail = _car_tax_forbidden_check("<h1>자동차 취등록세 계산기</h1>")
+    assert passed is True and skipped is False, f"정상 서비스명이 오탐 차단됨: {detail}"
+
+
+def test_b_car_tax_correct_negation_explanation_not_blocked():
+    """Test B — '등록세는 더 이상 별도 세목이 아니다'라는 법적으로 올바른 설명은
+    forbidden phrase에 걸리지 않아야 한다(legal_master 자신의 reviewer_expectation이
+    요구하는 문구)."""
+    for html in (
+        "<p>등록세는 왜 별도로 계산하지 않나요? 현재는 등록세라는 별도의 세목이 존재하지 않습니다.</p>",
+        "<p>취득세와 등록세가 취득세로 통합되었습니다.</p>",
+    ):
+        (passed, skipped), detail = _car_tax_forbidden_check(html)
+        assert passed is True and skipped is False, f"올바른 부정 설명이 오탐 차단됨: {html!r} → {detail}"
+
+
+def test_c_car_tax_wrong_separate_payment_claim_is_blocked():
+    """Test C — '등록세를 별도로 납부해야 한다'는 폐기된 법령을 전제한 잘못된 주장은
+    반드시 차단돼야 한다(forbidden phrase의 실제 목적)."""
+    (passed, skipped), detail = _car_tax_forbidden_check("<p>등록세를 별도로 납부해야 합니다.</p>")
+    assert passed is False and skipped is False
+    assert "등록세를 별도로 납부" in detail
+
+    (passed2, skipped2), detail2 = _car_tax_forbidden_check("<p>등록세가 별도로 부과됩니다.</p>")
+    assert passed2 is False and skipped2 is False
+    assert "등록세가 별도로 부과" in detail2
+
+
+# ─────────────────────────────────────────────────────────────
 # 7. STEP 28-129 — input_validation_review 체크리스트 항목
 # ─────────────────────────────────────────────────────────────
 

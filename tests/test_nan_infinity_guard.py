@@ -261,12 +261,20 @@ def test_regression_bmi_normal_and_boundary():
 
 
 def test_regression_car_tax_normal_and_boundary():
+    """STEP 28-193 이후 자동차_취등록세_계산기는 modules/app_generator.py의
+    slug 조건부 완전 커스텀 분기로 계산되며, DB에 저장된 input_schema/formula
+    (구 스키마: 문자열 car_type/region, 이원 세목)는 실행 시 전혀 참조되지
+    않는다 — 이 분기가 슬러그만 보고 자체 로직으로 완전히 대체하기 때문이다.
+    따라서 이 회귀 테스트는 실제 코드가 쓰는 새 스키마(car_type/eco_type 숫자
+    코드)로 입력하고 새 출력 필드를 검증한다. DB record(Sheets) 자체는 이
+    변경으로 건드리지 않는다 — 여전히 구 스키마를 저장하고 있어도 무방하다."""
     out = _run_compute_result("자동차_취등록세_계산기",
-                               {"car_type": "a", "car_price": 30000000, "region": "x"})
+                               {"car_type": 1, "car_price": 30000000, "eco_type": 0})
     assert out["acquisition_tax"] == 2100000
-    assert out["registration_tax"] == 600000
+    assert out["standard_acquisition_tax"] == 2100000
+    assert out["exemption_amount"] == 0
     assert _run_compute_result("자동차_취등록세_계산기",
-                                {"car_type": "a", "car_price": -5000000, "region": "x"}) is None
+                                {"car_type": 1, "car_price": -5000000, "eco_type": 0}) is None
 
 
 def test_regression_jeonse_vs_monthly_normal():
