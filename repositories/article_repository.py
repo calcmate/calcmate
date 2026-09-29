@@ -121,6 +121,12 @@ class ArticleRepository:
             article["ID"] = datetime.now().strftime("%Y%m%d%H%M%S") + "_" + uuid.uuid4().hex[:4]
         article.setdefault("상태값", "대기")
         article.setdefault("최종수정일", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        # STEP32: quality_score=0이 SQLiteAdapter/SheetsAdapter의 str(v or "")에 의해
+        # 빈 문자열로 소실되는 것을 막기 위해, 여기서만 미리 문자열화한다(STEP31에서 확인된
+        # 잠재 위험 경로 — calculator_pipeline.py의 REWRITE HOLD 저장). None은 기존 그대로
+        # 어댑터에 넘겨 기존 "빈 값" 처리 동작을 유지한다(전역 adapter는 건드리지 않음).
+        if "quality_score" in article and article["quality_score"] is not None:
+            article["quality_score"] = str(article["quality_score"])
         return self._db.insert(self.TABLE, article)
 
     def update_status(self, article_id: str, status: str, extra: dict = None):
@@ -129,6 +135,10 @@ class ArticleRepository:
         data = {"상태값": status, "최종수정일": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         if extra:
             data.update(extra)
+        # STEP32: save()와 동일한 원칙 — rewrite_pipeline.py가 이 경유로 quality_score를
+        # 저장하므로 동일하게 보호한다.
+        if "quality_score" in data and data["quality_score"] is not None:
+            data["quality_score"] = str(data["quality_score"])
         self._db.update(self.TABLE, article_id, data)
 
     def upsert_by_policy_name(self, policy_name: str, source_url: str, score: float,

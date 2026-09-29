@@ -32,6 +32,8 @@ def parse_args():
     p.add_argument("--mode", choices=["recent", "full"], default="recent",
                    help="recent=최근 N일 / full=전체 스캔 (기본 recent)")
     p.add_argument("--instance", default=None, help="멀티 인스턴스 ID")
+    p.add_argument("--dry-run", action="store_true",
+                   help="--once와 함께: 판정만 출력하고 state/이력/텔레그램에 아무것도 쓰지 않음")
     return p.parse_args()
 
 
@@ -53,9 +55,13 @@ def main():
     cfg["_root"] = str(BASE)
     cfg["_instance_id"] = args.instance or "default"
 
+    if args.dry_run and not args.once:
+        print("[오류] --dry-run은 --once와 함께만 사용할 수 있습니다.")
+        sys.exit(2)
+
     if args.once:
-        LOG.info("Content Sync 1회 실행 (mode=%s)", args.mode)
-        summary = run_sync_once(cfg, mode=args.mode)
+        LOG.info("Content Sync 1회 실행 (mode=%s, dry_run=%s)", args.mode, args.dry_run)
+        summary = run_sync_once(cfg, mode=args.mode, dry_run=args.dry_run)
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return
 

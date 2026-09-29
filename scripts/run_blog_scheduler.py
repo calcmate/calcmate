@@ -54,7 +54,7 @@ def cmd_full_dry_run(args):
     db_hash_before = _db_hash(db_path)
 
     t0 = time.time()
-    result = run_blog_once(cfg, max_count=10)
+    result = run_blog_once(cfg, max_count=10, driver_id="cli_run_blog_scheduler")
     elapsed = time.time() - t0
 
     # post-run hash
@@ -100,7 +100,7 @@ def cmd_single_dry_run(args):
     from modules.blog_scheduler_adapter import run_blog_dry_run
 
     cfg = _cfg()
-    result = run_blog_dry_run(cfg, args.slug, args.intent)
+    result = run_blog_dry_run(cfg, args.slug, args.intent, driver_id="cli_run_blog_scheduler")
 
     if result["success"]:
         r = result["result"]
@@ -190,7 +190,7 @@ def cmd_full(args):
 
     # dry-run
     t0 = time.time()
-    result = run_blog_once(cfg, max_count=10)
+    result = run_blog_once(cfg, max_count=10, driver_id="cli_run_blog_scheduler")
     elapsed = time.time() - t0
 
     # post hashes
@@ -275,7 +275,12 @@ def cmd_full(args):
 
 
 def cmd_publish(args):
-    """단일 콘텐츠 WordPress 발행 테스트 (draft 모드)."""
+    """TEST-DRAFT: 단일 콘텐츠를 실제 WordPress에 status="draft"(비공개 초안)로
+    게시한다. 실제 WP POST가 발생하지만 공개(publish)되지는 않는다.
+
+    CALCMATE-STEP170: BLOG_SCHEDULE.mode="draft"(SAFE-DRY-RUN, WP 자체를 호출하지
+    않음)와 이 명령의 "draft"는 서로 다른 개념이다 — 혼동 방지를 위해 명시한다.
+    """
     import yaml
     cfg = _cfg()
     # config/secrets 로드
@@ -291,13 +296,14 @@ def cmd_publish(args):
 
     db_hash_before = _db_hash(str(ROOT / "data" / "blog_auto.db"))
 
-    result = run_blog_once_wp(cfg, max_count=1)
+    result = run_blog_once_wp(cfg, max_count=1, driver_id="cli_run_blog_scheduler",
+                              status="draft")
 
     db_hash_after = _db_hash(str(ROOT / "data" / "blog_auto.db"))
     db_unchanged = db_hash_before == db_hash_after
 
     print(f"\n{'='*60}")
-    print(f"[Blog Scheduler] WP Publish Test")
+    print(f"[Blog Scheduler] TEST-DRAFT (WP 비공개 초안 생성)")
     print(f"{'='*60}")
     print(f"  Produced: {result['produced']}")
     print(f"  DB hash:  {db_hash_before} -> {db_hash_after} ({'UNCHANGED' if db_unchanged else 'CHANGED!'})")
@@ -323,7 +329,7 @@ def main():
 
     sub.add_parser("run", help="Golden 10 전체 dry-run")
     sub.add_parser("full", help="Full verification (dry-run + validate + protection)")
-    sub.add_parser("publish", help="단일 WP 발행 테스트 (draft)")
+    sub.add_parser("publish", help="TEST-DRAFT: 단일 WP 초안 생성(status=draft, 비공개, 실제 WP POST 발생)")
 
     p_single = sub.add_parser("single", help="단일 콘텐츠 dry-run")
     p_single.add_argument("--slug", required=True)

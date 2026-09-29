@@ -141,14 +141,42 @@ def default_slots(count: int) -> list:
 def get_slots_for(cfg: dict, d: date = None) -> tuple:
     """(day_type, slots) 반환.
 
-    Blog 라인: BLOG_SCHEDULE.publish_slots 우선.
-    Calculator 라인(기본): PUBLISH_SCHEDULE优先, 없으면 자동 생성.
+    Blog 라인: PUBLISHING_POLICY.weekdays가 있으면 그 날의 실제 요일(mon..sun)
+    key로 count/time_ranges를 조회해 슬롯을 계산한다(CALCMATE-WEEKDAY-SEMANTIC-
+    FIX-01) — 해당 요일의 count가 0이면 그날은 슬롯을 만들지 않는다(사용자가
+    선택하지 않은 요일 = 실행 안 함). PUBLISHING_POLICY.weekdays가 없거나 형식이
+    유효하지 않으면 기존 BLOG_SCHEDULE.publish_slots/weekday_only로 그대로
+    폴백한다(하위호환, 기존 동작 무변경). Publishing Planner(one-off 예약 생성,
+    modules/publishing_planner.py)와 API/schema는 이 변경과 무관하게 그대로다.
+    Calculator 라인(기본): PUBLISH_SCHEDULE 우선, 없으면 자동 생성.
     """
     d = d or date.today()
     day_type = "weekend" if _is_weekend(d) else "weekday"
 
-    # Blog 라인 → BLOG_SCHEDULE.publish_slots 사용
     if cfg.get("scheduler_line") == "blog":
+        pp = cfg.get("PUBLISHING_POLICY")
+        if isinstance(pp, dict):
+            weekdays = pp.get("weekdays")
+            if isinstance(weekdays, dict) and weekdays:
+                try:
+                    from .publishing_policy import weekday_key_for_date
+                    entry = weekdays.get(weekday_key_for_date(d))
+                    if isinstance(entry, dict):
+                        count = int(entry.get("count", 0) or 0)
+                        if count <= 0:
+                            return day_type, []  # 이 요일은 선택되지 않음
+                        ranges = entry.get("time_ranges")
+                        if isinstance(ranges, list) and ranges:
+                            slots = [{"start": r["start"], "end": r["end"]} for r in ranges
+                                     if isinstance(r, dict) and "start" in r and "end" in r]
+                            if slots:
+                                return day_type, slots
+                        # count>0인데 유효한 time_ranges가 없으면 기존 자동 생성으로 대체
+                        return day_type, default_slots(count)
+                except Exception:
+                    pass  # 형식 이상 시 아래 기존 BLOG_SCHEDULE 폴백으로 진행
+
+        # 폴백: PUBLISHING_POLICY.weekdays가 없거나 사용 불가 → 기존 방식 그대로
         bs = cfg.get("BLOG_SCHEDULE", {}) or {}
         slots = bs.get("publish_slots") or []
         weekday_only = bs.get("weekday_only", False)

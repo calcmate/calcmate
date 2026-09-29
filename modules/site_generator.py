@@ -180,7 +180,7 @@ a:hover{text-decoration:underline}
 }
 @media(max-width:480px){
   .cm-calc-grid{grid-template-columns:1fr}
-  .cm-nav-links a:not(:last-child){display:none}
+  .cm-nav-links a:not(:first-child){display:none}
 }
 
 /* ── 통합 검색 + category 필터(STEP196) ── */
@@ -486,8 +486,7 @@ def generate_index(cfg: dict) -> str:
   <div class="cm-wrap">
     <!-- Hero -->
     <section class="cm-hero">
-      <div class="cm-hero-logo">{_esc(site_name)}</div>
-      <p class="cm-hero-tagline">CalcMate — 실생활 계산기 모음</p>
+      <h1 class="cm-hero-logo">CalcMate — 실생활 계산기 모음</h1>
       <p class="cm-hero-sub">필요한 계산을 쉽고 빠르게, 한곳에서 확인하세요.</p>
       <a class="cm-hero-btn" href="#calculators">계산기 시작하기</a>
     </section>
@@ -585,8 +584,8 @@ def generate_index(cfg: dict) -> str:
 </script>"""
 
     return _page(
-        title=f"{site_name} — 퇴직금·주휴수당·실업급여·4대보험 무료 계산기",
-        description="퇴직금, 주휴수당, 실업급여, 4대보험, 연차수당을 법령 기준으로 쉽고 빠르게 계산하세요. 대한민국 직장인을 위한 무료 계산기 플랫폼.",
+        title="CalcMate — 실생활 계산기 모음",
+        description="필요한 계산을 쉽고 빠르게, 한곳에서 확인하세요. CalcMate에서 다양한 실생활 계산기를 간편하게 이용할 수 있습니다.",
         css_path="site.css",
         site_url=u,
         body=body,

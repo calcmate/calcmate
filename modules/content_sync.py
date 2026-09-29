@@ -5,7 +5,18 @@ modules/content_sync.py — Content Sync Engine (v12 신규)
 목적
 ----
 WordPress(발행 채널)의 실제 상태를 "기준(source of truth)"으로 삼아,
-Google Sheets(마스터_DB)의 상태를 주기적으로 맞춰주는 **독립 서비스**.
+CalcMate blog_articles에 기록된 발행 글과 WP 상태가 어긋났는지 주기적으로 점검하는
+**독립 서비스**.
+
+CALCMATE-CONTENT-SYNC-BLOG-ARTICLES-MIGRATION-IMPLEMENT-01:
+  - 대상 WP: 평면 WORDPRESS_URL(obsolete 로컬 salarymate.test) 대신
+    config_loader._apply_wp_target(cfg, "production")으로 secrets.yaml의 nested
+    wordpress.{url,username,app_password} 세트를 사용한다(get_adapter()).
+  - 데이터 source: 레거시 articles(Sheets 마스터_DB) 대신 blog_articles
+    (BlogArticleRepository + get_blog_article_storage_adapter, READ-ONLY).
+  - 쓰기 소유권: blog_articles의 유일한 writer는 modules/wp_blog_sync.py(INSERT)다.
+    content_sync는 blog_articles/Sheets에 절대 쓰지 않고, 판정 결과는 자기 소유
+    파일(data/schedule/content_sync_state.json, sync_history.jsonl)에만 남긴다.
 
 Publish Scheduler(scheduler.py)와 완전히 분리되어 있다:
   - 별도 진입점(run_sync.py)에서 기동
@@ -18,14 +29,18 @@ scheduler.py 의 run_scheduler_loop 패턴(poll 루프 + 파일 lock)만 재사�
 -------
 post_id(= wp_post_id) 단일 기준. URL은 URL_CHANGED 판정에만 쓰고 매칭 키로 쓰지 않는다.
 
-동기화 플래그(sync_flag)
-------------------------
-  OK           : Sheet ↔ WP 일치
-  WP_DELETED   : Sheet에 wp_post_id가 있으나 WP에서 404(영구삭제)
-  WP_TRASH     : WP에서 휴지통(trash) 상태
-  URL_CHANGED  : WP 링크가 Sheet에 기록된 URL과 다름
-  ORPHAN_WP    : WP에는 있는데 Sheet에 대응 행이 없음
-  ORPHAN_SHEET : Sheet는 '발행완료'라는데 wp_post_id가 없어 WP와 대조 불가
+동기화 플래그(sync_flag) — blog_articles 기준 의미
+-------------------------------------------------
+  OK               : blog_articles row ↔ WP(publish) 일치
+  WP_DELETED       : row에 wp_post_id가 있으나 WP에서 404(영구삭제)
+  WP_TRASH         : WP에서 휴지통(trash) 상태
+  WP_NOT_PUBLISHED : WP에 존재하지만 publish가 아님(draft/pending/private/future) — 이상
+                     기록만, 알림 대상 아님
+  URL_CHANGED      : WP 링크가 row의 wp_permalink와 다름(퍼센트 인코딩/끝 슬래시 정규화 후 비교)
+  ORPHAN_WP        : WP에 publish 상태로 있는데 blog_articles에 대응 wp_post_id가 없음
+                     (목록 조회는 status=publish만 — draft 등은 ORPHAN 판정 대상 아님)
+  ORPHAN_SHEET     : (플래그 문자열은 UI 호환을 위해 유지) blog_articles row가 status=publish
+                     인데 wp_post_id가 없어 WP와 대조 불가
 
 확장 포인트(지금은 미구현, 시그니처/구조만)
   - Restore: WP_TRASH 글 운영자 복원 트리거 → restore_from_trash() 스텁
@@ -37,37 +52,40 @@ import time
 from datetime import datetime, date, timedelta
 from pathlib import Path
 
+from urllib.parse import unquote
+
 import requests
 
 from . import publisher
 from . import telegram_ops
 from .config_loader import is_wordpress_ready
 from .logger import get_logger
-from adapters.db.factory import get_db_adapter
-from repositories.article_repository import ArticleRepository
 
 LOG = get_logger()
 
-# sync_flag 값 (시트 최소 컬럼)
+# sync_flag 값
 FLAG_OK = "OK"
 FLAG_WP_DELETED = "WP_DELETED"
 FLAG_WP_TRASH = "WP_TRASH"
+FLAG_WP_NOT_PUBLISHED = "WP_NOT_PUBLISHED"
 FLAG_URL_CHANGED = "URL_CHANGED"
 FLAG_ORPHAN_WP = "ORPHAN_WP"
 FLAG_ORPHAN_SHEET = "ORPHAN_SHEET"
 
-SYNC_FLAGS = (FLAG_OK, FLAG_WP_DELETED, FLAG_WP_TRASH,
+SYNC_FLAGS = (FLAG_OK, FLAG_WP_DELETED, FLAG_WP_TRASH, FLAG_WP_NOT_PUBLISHED,
               FLAG_URL_CHANGED, FLAG_ORPHAN_WP, FLAG_ORPHAN_SHEET)
 
-# 텔레그램 알림 대상 이상 상태(WP_TRASH는 운영자 의도 삭제라 알림 제외 — 이력엔 남김)
+# 텔레그램 알림 대상 이상 상태(WP_TRASH는 운영자 의도 삭제, WP_NOT_PUBLISHED는 운영자
+# 의도 비공개일 수 있어 알림 제외 — 이력엔 남김)
 ALERT_FLAGS = (FLAG_WP_DELETED, FLAG_URL_CHANGED, FLAG_ORPHAN_WP, FLAG_ORPHAN_SHEET)
 
-# 시트 신규 컬럼명(sheets_adapter.update 가 헤더에 자동 추가)
+# 판정 상태 기록 필드(content_sync 소유 state 파일 안의 키)
 COL_WP_STATUS = "wp_status"
 COL_LAST_SYNCED = "last_synced_at"
 COL_SYNC_FLAG = "sync_flag"
 
-_ARTICLES_TABLE = "articles"
+_PRODUCTION_WP_TARGET = "production"
+_WP_FLAT_KEYS = ("WORDPRESS_URL", "WORDPRESS_USERNAME", "WORDPRESS_APP_PASSWORD", "WORDPRESS_PASSWORD")
 
 
 # ── 경로 / lock / 이력 (scheduler.py 패턴 재사용, 파일만 분리) ──────
@@ -83,6 +101,31 @@ def _lock_path(cfg: dict) -> Path:
 
 def _history_path(cfg: dict) -> Path:
     return _schedule_dir(cfg) / "sync_history.jsonl"
+
+def _state_path(cfg: dict) -> Path:
+    # 직전 판정(post별 sync_flag/wp_status) 보관 — 상태가 바뀐 경우만 이력/알림 대상으로
+    # 삼기 위한 content_sync 전용 파일. blog_articles/Sheets에는 쓰지 않는다.
+    return _schedule_dir(cfg) / "content_sync_state.json"
+
+def _load_state(cfg: dict) -> dict:
+    p = _state_path(cfg)
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        LOG.warning("[sync] state 읽기 실패(%s) — 빈 상태로 시작", e)
+        return {}
+
+def _save_state(cfg: dict, state: dict):
+    p = _state_path(cfg)
+    try:
+        tmp = p.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(p)
+    except Exception as e:
+        LOG.warning("[sync] state 기록 실패: %s", e)
 
 def _acquire_lock(cfg: dict, stale_seconds: int = 3600) -> bool:
     p = _lock_path(cfg)
@@ -222,21 +265,49 @@ class WordPressAdapter(OutputAdapter):
         return publisher.restore_post(self._cfg, post_id)  # 기존 복원 클라이언트 재사용
 
 
+def _production_wp_cfg(cfg: dict) -> dict:
+    """cfg 사본에 production WordPress credential set을 적용한다.
+
+    endpoint/인증을 수동 조합하지 않고 config_loader._apply_wp_target(..., "production")을
+    그대로 재사용한다(secrets.yaml nested wordpress.* → flat WORDPRESS_* 3개 원자 교체).
+    production 세트가 없으면 로컬 flat 값으로 되돌아가지 않도록 flat WP 키를 모두 제거해
+    채널을 '미구성'으로 만든다(fail-closed — salarymate.test fallback 없음)."""
+    from .config_loader import _apply_wp_target, ConfigError
+    wp_cfg = dict(cfg or {})
+    try:
+        return _apply_wp_target(wp_cfg, _PRODUCTION_WP_TARGET)
+    except ConfigError as e:
+        LOG.warning("[sync] production WordPress 설정 없음 — 채널 미구성으로 처리: %s", e)
+        for k in _WP_FLAT_KEYS:
+            wp_cfg.pop(k, None)
+        return wp_cfg
+
+
 def get_adapter(cfg: dict) -> OutputAdapter:
-    """현재는 WordPress 하나. 나중에 채널별 분기(config)만 추가하면 됨."""
-    return WordPressAdapter(cfg)
+    """현재는 WordPress 하나(CalcMate production). 나중에 채널별 분기(config)만 추가하면 됨."""
+    return WordPressAdapter(_production_wp_cfg(cfg))
 
 
-# ── 시트 행 헬퍼 ───────────────────────────────────────────────────
+def _blog_article_repo(cfg: dict):
+    """blog_articles 읽기 전용 접근 — wp_blog_sync와 같은 기존 Repository/adapter 재사용."""
+    from adapters.db.factory import get_blog_article_storage_adapter
+    from repositories.blog_article_repository import BlogArticleRepository
+    return BlogArticleRepository(get_blog_article_storage_adapter(cfg))
+
+
+# ── blog_articles 행 헬퍼 ──────────────────────────────────────────
 def _row_post_id(row: dict) -> str:
     return str(row.get("wp_post_id", "") or "").strip()
 
 def _row_url(row: dict) -> str:
-    # 발행 URL 우선, 없으면 wp_permalink
-    return str(row.get("발행 URL", "") or row.get("wp_permalink", "") or "").strip()
+    return str(row.get("wp_permalink", "") or "").strip()
+
+def _norm_url(url: str) -> str:
+    # 한글 slug는 WP 응답/저장값 사이에 퍼센트 인코딩 여부가 다를 수 있다.
+    return unquote(str(url or "").strip()).rstrip("/")
 
 def _row_published_date(row: dict) -> date | None:
-    raw = str(row.get("발행일시", "") or row.get("published_at", "") or "").strip()
+    raw = str(row.get("published_at", "") or "").strip()
     if not raw:
         return None
     try:
@@ -266,22 +337,25 @@ def _classify(row: dict, wp: dict) -> tuple[str, str]:
     if status == "trash":
         return FLAG_WP_TRASH, status
     if status == "publish":
-        wp_link = str(wp.get("link", "") or "").strip()
-        sheet_url = _row_url(row)
-        if wp_link and sheet_url and wp_link != sheet_url:
+        wp_link = _norm_url(wp.get("link", ""))
+        row_url = _norm_url(_row_url(row))
+        if wp_link and row_url and wp_link != row_url:
             return FLAG_URL_CHANGED, status
         return FLAG_OK, status
-    # draft/pending/private/future 등: 이상 아님. 실제 상태만 기록.
-    return FLAG_OK, status
+    # draft/pending/private/future 등: 삭제/고아가 아니라 "비공개 전환"으로만 기록(알림 제외).
+    return FLAG_WP_NOT_PUBLISHED, status
 
 
 # ── 동기화 1회 실행 ────────────────────────────────────────────────
-def run_sync_once(cfg: dict, mode: str = "recent", adapter: OutputAdapter | None = None) -> dict:
-    """WP 기준으로 Sheet 상태를 1회 동기화.
+def run_sync_once(cfg: dict, mode: str = "recent", adapter: OutputAdapter | None = None,
+                  *, dry_run: bool = False, repo=None) -> dict:
+    """WP(CalcMate production) 기준으로 blog_articles 발행 글 상태를 1회 점검.
 
     mode="recent": 최근 N일(CONTENT_SYNC.recent_days, 기본 30) 발행분만 대조.
     mode="full"  : 전체 스캔.
-    반환: 요약 dict(검사/변경/이상 카운트 + 이상 목록).
+    dry_run=True : 판정만 하고 state/이력/텔레그램에 아무것도 쓰지 않는다.
+    repo         : 테스트 주입용(기본 blog_articles Repository, READ-ONLY로만 사용).
+    반환: 요약 dict(검사/변경/이상 카운트 + 이상 목록 + 판정별 후보 목록).
     """
     mode = "full" if str(mode).lower() == "full" else "recent"
     cs = cfg.get("CONTENT_SYNC", {}) or {}
@@ -292,14 +366,11 @@ def run_sync_once(cfg: dict, mode: str = "recent", adapter: OutputAdapter | None
     if not adapter.is_ready():
         LOG.info("[sync] 채널(%s) 미구성 — 동기화 건너뜀", adapter.name)
         return {"ok": False, "reason": "adapter_not_ready", "mode": mode,
-                "checked": 0, "changed": 0, "anomalies": []}
+                "checked": 0, "changed": 0, "anomalies": [], "dry_run": dry_run}
 
-    db = get_db_adapter(cfg)
-    # 동기화는 시트 최신 상태를 기준으로 판단해야 하므로 TTL 캐시가 있어도 강제 새로고침.
-    if hasattr(db, "invalidate_cache"):
-        db.invalidate_cache("articles")
-    repo = ArticleRepository(db)
-    all_rows = repo.get_all()
+    repo = repo or _blog_article_repo(cfg)
+    all_rows = repo.list_all()
+    state = _load_state(cfg)
 
     # 대조 대상 행: recent면 최근분만
     if mode == "recent":
@@ -312,15 +383,19 @@ def run_sync_once(cfg: dict, mode: str = "recent", adapter: OutputAdapter | None
     changed = 0
     skipped = 0
     anomalies: list[dict] = []
+    candidates: dict[str, list[str]] = {f: [] for f in SYNC_FLAGS}
+    errors: list[dict] = []
 
-    # 1~3·5) Sheet의 각 post_id를 WP와 대조
+    # 1~3·5) blog_articles 각 row의 wp_post_id를 WP와 대조
     for row in target_rows:
         post_id = _row_post_id(row)
         if not post_id:
-            # ORPHAN_SHEET: '발행완료'인데 wp_post_id가 없어 WP와 대조 불가
-            if str(row.get("상태값", "")).strip() == "발행완료":
-                _record(cfg, db, row, FLAG_ORPHAN_SHEET, "", now_iso, anomalies)
-                changed += 1
+            # ORPHAN_SHEET: blog_articles가 publish라는데 wp_post_id가 없어 WP와 대조 불가
+            if str(row.get("status", "")).strip() == "publish":
+                candidates[FLAG_ORPHAN_SHEET].append(str(row.get("article_id", "")))
+                if _state_changed(state, row, FLAG_ORPHAN_SHEET, ""):
+                    _record(cfg, state, row, FLAG_ORPHAN_SHEET, "", now_iso, anomalies, dry_run)
+                    changed += 1
             continue
 
         checked += 1
@@ -328,42 +403,55 @@ def run_sync_once(cfg: dict, mode: str = "recent", adapter: OutputAdapter | None
         flag, wp_status = _classify(row, wp)
         if not flag:                          # 미확정 오류 → 이번 회차 판정 보류
             skipped += 1
+            errors.append({"post_id": post_id, "error": str(wp.get("error", ""))})
             LOG.warning("[sync] post_id=%s 판정 보류(%s)", post_id, wp.get("error"))
             continue
+        candidates[flag].append(post_id)
 
-        prev_flag = str(row.get(COL_SYNC_FLAG, "") or "")
-        prev_wp_status = str(row.get(COL_WP_STATUS, "") or "")
-        # 상태가 달라졌을 때만 시트 기록(불필요한 쓰기/쿼터 절약)
-        if flag != prev_flag or wp_status != prev_wp_status:
-            _record(cfg, db, row, flag, wp_status, now_iso, anomalies)
+        # 상태가 달라졌을 때만 state/이력 기록(불필요한 알림 방지)
+        if _state_changed(state, row, flag, wp_status):
+            _record(cfg, state, row, flag, wp_status, now_iso, anomalies, dry_run)
             changed += 1
 
-    # 4) ORPHAN_WP: WP에는 있는데 Sheet에 대응 행이 없음
+    # 4) ORPHAN_WP: WP에 publish로 있는데 blog_articles에 대응 wp_post_id가 없음
     since_iso = None
     if mode == "recent":
         since_iso = (started - timedelta(days=recent_days)).isoformat()
-    sheet_ids = {_row_post_id(r) for r in all_rows if _row_post_id(r)}
+    db_ids = {_row_post_id(r) for r in all_rows if _row_post_id(r)}
     for wp_post in adapter.fetch_all(since=since_iso):
         pid = str(wp_post.get("post_id", "") or "").strip()
-        if pid and pid not in sheet_ids:
+        if pid and pid not in db_ids:
             rec = {"flag": FLAG_ORPHAN_WP, "post_id": pid,
                    "url": wp_post.get("link", ""), "wp_status": wp_post.get("status", ""),
                    "article_id": ""}
+            candidates[FLAG_ORPHAN_WP].append(pid)
             anomalies.append(rec)
-            _append_history(cfg, {"at": now_iso, "mode": mode, **rec})
+            if not dry_run:
+                _append_history(cfg, {"at": now_iso, "mode": mode, **rec})
 
     summary = {
         "ok": True,
         "mode": mode,
         "adapter": adapter.name,
+        "dry_run": dry_run,
+        "candidate_count": len(target_rows),
+        "matched_count": len(candidates[FLAG_OK]),
         "checked": checked,
         "changed": changed,
         "skipped": skipped,
+        "errors": errors,
+        "candidates": {f: ids for f, ids in candidates.items() if f != FLAG_OK},
         "anomalies": anomalies,
         "anomaly_count": len(anomalies),
         "started_at": started.isoformat(timespec="seconds"),
         "finished_at": datetime.now().isoformat(timespec="seconds"),
     }
+    if dry_run:
+        LOG.info("[sync] dry-run 완료 mode=%s 대상=%d 일치=%d 보류=%d 이상후보=%d (기록/알림 없음)",
+                 mode, len(target_rows), summary["matched_count"], skipped, len(anomalies))
+        return summary
+
+    _save_state(cfg, state)
     _append_history(cfg, {"at": now_iso, "event": "sync_run", **{
         k: summary[k] for k in ("mode", "adapter", "checked", "changed", "skipped", "anomaly_count")}})
     LOG.info("[sync] 완료 mode=%s 검사=%d 변경=%d 보류=%d 이상=%d",
@@ -373,22 +461,31 @@ def run_sync_once(cfg: dict, mode: str = "recent", adapter: OutputAdapter | None
     return summary
 
 
-def _record(cfg: dict, db, row: dict, flag: str, wp_status: str,
-            now_iso: str, anomalies: list):
-    """시트 셀 갱신 + 이상 상태면 anomalies/이력에 적재."""
-    article_id = str(row.get("ID", "") or "").strip()
-    data = {COL_WP_STATUS: wp_status, COL_LAST_SYNCED: now_iso, COL_SYNC_FLAG: flag}
-    if article_id:
-        try:
-            db.update(_ARTICLES_TABLE, article_id, data)  # 신규 컬럼은 헤더 자동 추가
-        except Exception as e:
-            LOG.warning("[sync] 시트 갱신 실패(ID=%s): %s", article_id, e)
+def _state_key(row: dict) -> str:
+    return _row_post_id(row) or "article:" + str(row.get("article_id", "") or "")
+
+
+def _state_changed(state: dict, row: dict, flag: str, wp_status: str) -> bool:
+    prev = state.get(_state_key(row)) or {}
+    return (str(prev.get(COL_SYNC_FLAG, "") or "") != flag
+            or str(prev.get(COL_WP_STATUS, "") or "") != wp_status)
+
+
+def _record(cfg: dict, state: dict, row: dict, flag: str, wp_status: str,
+            now_iso: str, anomalies: list, dry_run: bool = False):
+    """판정 결과를 content_sync 전용 state에 반영하고, 이상 상태면 anomalies/이력에 적재.
+    blog_articles(및 Sheets 백업)에는 쓰지 않는다 — 그 테이블의 writer는 wp_blog_sync뿐."""
+    article_id = str(row.get("article_id", "") or "").strip()
+    if not dry_run:
+        state[_state_key(row)] = {COL_SYNC_FLAG: flag, COL_WP_STATUS: wp_status,
+                                  COL_LAST_SYNCED: now_iso, "article_id": article_id}
     rec = {"flag": flag, "post_id": _row_post_id(row), "url": _row_url(row),
            "wp_status": wp_status, "article_id": article_id,
-           "title": row.get("최종추천제목", "")}
+           "title": row.get("title", "")}
     if flag in SYNC_FLAGS and flag != FLAG_OK:
         anomalies.append(rec)
-        _append_history(cfg, {"at": now_iso, **rec})
+        if not dry_run:
+            _append_history(cfg, {"at": now_iso, **rec})
 
 
 def _notify_anomalies(cfg: dict, summary: dict):
@@ -503,12 +600,45 @@ def catch_up_if_needed(cfg: dict, adapter: OutputAdapter | None = None) -> dict 
         _release_lock(cfg)
 
 
+def _content_sync_config_path(cfg: dict) -> Path:
+    """cfg가 로드된 config.yaml 경로를 재구성한다(run_sync.py --instance 지원과 동일 규칙).
+    cfg에 _root/_instance_id가 없으면(dashboard.py 등 기본 실행) 기본 경로를 쓴다."""
+    root = Path(cfg.get("_root") or Path(__file__).resolve().parent.parent)
+    instance_id = cfg.get("_instance_id")
+    if instance_id and instance_id != "default":
+        return root / "config" / "instances" / instance_id / "config.yaml"
+    return root / "config" / "config.yaml"
+
+
+def _content_sync_enabled_now(cfg: dict, fallback: bool) -> bool:
+    """루프 tick마다 config.yaml의 CONTENT_SYNC.enabled만 다시 읽는다(안전한 최소 재로딩).
+    OPS-SCHED-01/02에서 확정된 원인 보완: run_sync_loop()는 시작 시점의 cs를 그대로
+    들고 있어 실행 중 enabled=false로 바뀌어도 반영하지 못했다 — 이 함수를 매 tick
+    실행 직전에 호출해 최신 값을 확인한다.
+    secrets 병합/스키마 검증 등 load_config()의 나머지 처리는 건드리지 않는다(민감정보가
+    아니고 매 tick 확인해야 하므로 가벼운 재읽기로 충분). 파일을 못 읽거나 파싱에
+    실패하면 기존에 알던 값(fallback)을 그대로 유지한다 — 재로딩 실패로 자동 Sync가
+    오동작(무한 실행 또는 무한 중단)하지 않도록."""
+    import yaml
+    path = _content_sync_config_path(cfg)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+        cs = raw.get("CONTENT_SYNC", {}) or {}
+        return bool(cs.get("enabled", fallback))
+    except Exception as e:
+        LOG.warning("[sync] enabled 재확인 실패(%s: %s) — 이전 값(%s) 유지", path, e, fallback)
+        return fallback
+
+
 def run_sync_loop(cfg: dict, poll_seconds: int | None = None):
     """콘텐츠 동기화 독립 루프. Publish Scheduler와 분리된 lock/이력/스케줄.
 
     매일 CONTENT_SYNC.run_at(기본 03:00, Publish 슬롯과 겹치지 않는 새벽)에 1회 실행.
     실행 mode: full_scan_weekday면 full, 그 외 recent.
     시작 시 catch-up: 재부팅 등으로 새벽 실행을 놓쳤어도 오늘분이 밀렸으면 즉시 1회 실행.
+    실행 직전(각 tick의 due 판정 통과 시)마다 enabled를 다시 확인해, 루프 시작 이후
+    config.yaml에서 OFF로 바뀌면 그 시점부터 자동 실행을 건너뛴다.
     """
     cs = cfg.get("CONTENT_SYNC", {}) or {}
     poll = int(poll_seconds if poll_seconds is not None else cs.get("poll_seconds", 60))
@@ -526,15 +656,18 @@ def run_sync_loop(cfg: dict, poll_seconds: int | None = None):
         try:
             now = datetime.now()
             if last_run_date != now.date() and _due_now(now, run_at):
-                mode = _resolve_mode(cfg, now)
-                if _acquire_lock(cfg):
-                    try:
-                        run_sync_once(cfg, mode=mode)
-                        last_run_date = now.date()
-                    finally:
-                        _release_lock(cfg)
+                if not _content_sync_enabled_now(cfg, cs.get("enabled", True)):
+                    LOG.info("[sync] CONTENT_SYNC.enabled=false(재확인됨) — 이번 주기 자동 실행 건너뜀")
                 else:
-                    LOG.info("[sync] 다른 동기화 진행 중(lock) — 이번 주기 건너뜀")
+                    mode = _resolve_mode(cfg, now)
+                    if _acquire_lock(cfg):
+                        try:
+                            run_sync_once(cfg, mode=mode)
+                            last_run_date = now.date()
+                        finally:
+                            _release_lock(cfg)
+                    else:
+                        LOG.info("[sync] 다른 동기화 진행 중(lock) — 이번 주기 건너뜀")
         except Exception as e:
             LOG.error("[sync] 루프 오류: %s", e, exc_info=True)
             # 루프 예외 — 운영자 즉시 인지(Sprint 1 §1-4). 스팸 방지 스로틀.

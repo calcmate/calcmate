@@ -73,3 +73,86 @@ G8은 legal_basis의 검증된 값이 본문에 실재하는지 **문자열 매�
 App Factory 신규 계산기는 legal이 비어 있다(`needs_human_legal: true`). `QUALITY_GATE.BLOCK_UNVERIFIED_LEGAL: true`(기본)
 이면 **GPT 호출 전에 즉시 품질보류**로 차단해 검증 안 된 법적 주장이 발행되는 것을 막는다. 사람이 legal을 채우면 자동 해제.
 상세: [REGISTRY.md](REGISTRY.md), [APP_FACTORY.md](APP_FACTORY.md).
+
+## Dashboard Architecture
+
+> 현재: Streamlit Dashboard(`dashboard.py`, `modules/setup_wizard.py`)가 운영 중이며,
+> React + FastAPI Dashboard(`frontend/`, `api/`)로 이관 진행 중.
+> 목표: React = 공식 Dashboard UI, FastAPI = 공식 Dashboard Backend,
+> Streamlit = legacy migration source(이관 원본). 이관 완료 후 Streamlit 제거.
+
+### 현재 상태
+
+| 계층 | 현재 구현 | 상태 |
+|------|-----------|------|
+| UI | Streamlit (`dashboard.py` 3989줄, 8그룹 2단 네비) + `modules/setup_wizard.py` | 운영 중 (Legacy) |
+| UI | React + Vite (`frontend/src/`) | 이관 진행 중 (공식 목표) |
+| Backend | FastAPI (`api/`) — 20개 서비스, 13개 라우터 | 운영 중 (공식 Backend) |
+| 스케줄러 | Streamlit 백그라운드 스레드 + FastAPI WorkerManager | FastAPI로 이관 중 |
+| 설정 저장 | Streamlit: config.yaml 직접 YAML 치환 | FastAPI: ConfigService.patch_* |
+
+### 목표 상태
+
+```
+New Dashboard Feature
+        ↓
+React Page/Component (frontend/src/pages/, frontend/src/components/)
+        ↓
+frontend/src/api/client.js (getJson/getJsonAuth/sendJson)
+        ↓
+FastAPI Router (api/routers/<domain>.py)
+        ↓
+FastAPI Service (api/services/<domain>_service.py)
+        ↓
+modules/repositories/data layer
+```
+
+Streamlit(`dashboard.py`, `modules/setup_wizard.py`)은 **이 흐름에 포함시키지 않는다**.
+기존 Streamlit 코드는 이관 시 참고용(legacy source)으로만 사용한다.
+
+### 핵심 규칙
+
+1. **새로운 Dashboard 기능은 Streamlit에 구현하지 않는다.**
+2. **새로운 Dashboard UI는 React frontend에 구현한다.**
+3. **새로운 backend/API 기능은 FastAPI에 구현한다.**
+4. **React는 FastAPI API를 통해 backend와 통신한다.**
+5. `dashboard.py`와 `modules/setup_wizard.py`는 현재 Streamlit 기능의 **이관 원본(legacy source)**으로 취급한다.
+6. 기존 Streamlit 기능을 React/FastAPI로 이관할 때는 기존 Streamlit 코드를 참고할 수 있지만, **신규 기능을 Streamlit 코드에 추가해서는 안 된다.**
+7. 새로운 `st.*`, `streamlit.*`, `st.session_state` 사용을 신규 Dashboard 기능에 추가하지 않는다.
+8. 새로운 BAT/스크립트에 `streamlit run`을 추가하지 않는다.
+9. 기능 추가가 필요하면 먼저 FastAPI router/service와 React page/component/API client 구조를 검토한다.
+
+### 이관 완료 현황 (2026-09 기준)
+
+| 기능 | Streamlit | FastAPI API | React UI | 상태 |
+|------|-----------|-------------|----------|------|
+| 운영센터 KPI | ✅ | ✅ `/api/dashboard/kpi` | ✅ `DashboardKpiPanel` | 완료 |
+| 파이프라인 다이어그램 | ✅ | ✅ `/api/dashboard/pipeline-status` | ✅ `DashboardPipelineStatusPanel` | 완료 |
+| 진행 현황 | ✅ | ✅ `/api/dashboard/progress` | ✅ `DashboardProgressPanel` | 완료 |
+| 현황 탭 | ✅ | ✅ `/api/dashboard/status-summary` | ✅ `DashboardStatusSummaryPanel` | 완료 |
+| AI Pipeline Monitor | ✅ | ✅ `/api/dashboard/ai-pipeline` | ✅ `DashboardAiPipelinePanel` | 완료 |
+| 작업 보드 | ✅ | ✅ `/api/workboard` | ✅ `Workboard` | 완료 |
+| 발행 목록/수정/휴지통 | ✅ | ✅ `/api/publish`, `/api/trash` | ✅ `Publish`, `Trash` | 완료 |
+| Blog Schedule (반복/One-off/Planner) | ✅ | ✅ `/api/scheduler/blog/*` | ✅ `BlogSchedulerPanel` | 완료 |
+| Calculator 관리 (전체) | ✅ | ✅ `/api/calculators/*` | ✅ `Calculators`, `CalculatorDetail` | 완료 |
+| App Factory (Mode A/B) | ✅ | ✅ `/api/calculators/generate/*` | ✅ `GenerateCalculatorPanel` + `ContractModePanel` | 완료 |
+| 비용 모니터 | ✅ | ✅ `/api/costs` | ✅ `CostPanel` | 완료 |
+| 오류 로그 | ✅ | ✅ `/api/logs/errors` | ✅ `ErrorLogPanel` | 완료 |
+| 실시간 로그 | ✅ | ✅ `/api/logs/live` | ✅ `LiveLogPanel` | 완료 (폴링) |
+| 헬스체크 | ✅ | ✅ `/api/health/*` | ✅ `Health` | 완료 |
+| 전략회의실 | ✅ | ✅ `/api/strategy-room/run` | ✅ `StrategyRoom` | 완료 |
+| 설정 (General/Image-Google) | ✅ | ✅ `/api/settings/*` | ✅ `Settings` + Panels | 부분 |
+| 동기화 복구 | ✅ | ⚠️ run-once만 | ❌ | 미완료 |
+| 초기 설정 마법사 | ✅ | ❌ | ❌ | 미이관 |
+| AI Assistant | ✅ | ❌ | ❌ | 미이관 |
+| 사이트 마법사 | ✅ | ✅ CRUD만 | ✅ 목록/Override | 미완료 |
+
+### 신규 기능 추가 시 체크리스트
+
+- [ ] FastAPI router(`api/routers/<domain>.py`)에 endpoint 추가
+- [ ] FastAPI service(`api/services/<domain>_service.py`)에 비즈니스 로직 추가
+- [ ] `frontend/src/api/client.js`에 API client 함수 추가
+- [ ] `frontend/src/pages/<Feature>.jsx` 페이지 생성
+- [ ] `frontend/src/components/<Feature>Panel.jsx` 컴포넌트 생성
+- [ ] `frontend/src/App.jsx`에 `<Route>` 등록
+- [ ] Streamlit(`dashboard.py`, `setup_wizard.py`) **수정하지 않음** 확인

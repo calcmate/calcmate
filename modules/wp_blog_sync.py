@@ -296,7 +296,7 @@ def run_wp_blog_sync_once(cfg: dict, db_path: str | None = None,
     접근하지 않는다. GOLDEN_10과 겹치는 slug, 기존 blog_articles row는 절대
     자동으로 새로 쓰거나 덮어쓰지 않는다(신규 오직 GOLDEN_10에 없는 순수 신규 글만).
     """
-    from adapters.db.factory import get_db_adapter
+    from adapters.db.factory import get_blog_article_storage_adapter
     from repositories.blog_article_repository import BlogArticleRepository
 
     wp_cfg = (cfg.get("wordpress") or {})
@@ -307,7 +307,7 @@ def run_wp_blog_sync_once(cfg: dict, db_path: str | None = None,
     if db_path is None:
         db_path = str(Path(cfg.get("_root", ".")) / cfg.get("SQLITE_PATH", "data/blog_auto.db"))
     if repo is None:
-        repo = BlogArticleRepository(get_db_adapter(cfg))
+        repo = BlogArticleRepository(get_blog_article_storage_adapter(cfg))
     if golden10_slugs is None:
         from content.blog import GOLDEN_10
         golden10_slugs = {gc.slug for gc in GOLDEN_10}

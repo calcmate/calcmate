@@ -1,6 +1,7 @@
 """
 modules/telegram_notifier.py — 텔레그램 알림 발송 (v12.1, cfg 참조 방식 수정)
 """
+import os
 import requests
 from .logger import get_logger
 
@@ -11,6 +12,12 @@ def _send_telegram(cfg: dict, message: str):
     chat_id = cfg.get('TELEGRAM_CHAT_ID')
 
     if not token or not chat_id:
+        if os.getenv("TELEGRAM_DEBUG") == "1":
+            instance_id = cfg.get("_instance_id", "unknown") if cfg else "unknown"
+            config_source = cfg.get("_config_source", "unknown") if cfg else "unknown"
+            LOG.debug("Telegram runtime cfg pid=%d instance=%s source=%s token_present=%s chat_id_present=%s",
+                      os.getpid(), instance_id, config_source,
+                      "true" if token else "false", "true" if chat_id else "false")
         LOG.warning("Telegram configuration missing (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID).")
         return
 
