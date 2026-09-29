@@ -25,6 +25,7 @@ import operator
 CUSTOM_COMPUTE_SLUGS: frozenset = frozenset({
     "연말정산_환급액_계산기",
     "육아휴직_급여_계산기",
+    "loan-repayment-calculator",
 })
 
 from .logger import get_logger

@@ -14,3 +14,8 @@ instances:
     generated_at: '2026-08-26T21:08:37.031365+09:00'
     formula_status: operator_confirmed
     test_cases_status: operator_confirmed
+  irp-tax-credit-v2:
+    contract_slug: irp-tax-credit-v2
+    generated_at: '2026-09-07T08:42:21.505486+09:00'
+    formula_status: operator_confirmed
+    test_cases_status: operator_confirmed

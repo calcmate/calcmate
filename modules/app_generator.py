@@ -557,6 +557,40 @@ def _compute_js(calc) -> str:
             '  return out;\n};\n'
             )
         )
+    if str(calc.get("slug", "")) == "loan-repayment-calculator":
+        # Loan Repayment Calculator: 원리금균등상환
+        # 입력: principal(대출원금), annual_rate(연이율), term_years(대출기간)
+        # 출력: monthly_payment(월상환액), total_payment(총상환액), total_interest(총이자)
+        return (
+            _js_open()
+            + _js_read("principal")
+            + _js_read("annual_rate")
+            + _js_read("term_years")
+            + '  if (!Number.isFinite(principal) || !Number.isFinite(annual_rate) || !Number.isFinite(term_years)) { return null; }\n'
+            + '  if (principal <= 0 || annual_rate < 0 || term_years <= 0) { return null; }\n'
+            + _js_init_out()
+            + (
+            '  var r = annual_rate / 12 / 100;\n'
+            '  var n = term_years * 12;\n'
+            '  var monthly_payment, total_payment, total_interest;\n'
+            '  if (r === 0) {\n'
+            '    monthly_payment = principal / n;\n'
+            '    total_payment = principal;\n'
+            '    total_interest = 0;\n'
+            '  } else {\n'
+            '    var factor = Math.pow(1 + r, n);\n'
+            '    monthly_payment = principal * r * factor / (factor - 1);\n'
+            '    total_payment = monthly_payment * n;\n'
+            '    total_interest = total_payment - principal;\n'
+            '  }\n'
+            '  if (!Number.isFinite(monthly_payment) || !Number.isFinite(total_payment) || !Number.isFinite(total_interest)) { return null; }\n'
+            '  out["monthly_payment"] = monthly_payment;\n'
+            '  out["total_payment"] = total_payment;\n'
+            '  out["total_interest"] = total_interest;\n'
+            '  out._formula = "원리금균등상환: 월이율 " + (r * 100).toFixed(4) + "%, 상환횟수 " + n + "회 → 월상환액 " + Math.round(monthly_payment).toLocaleString() + "원, 총상환액 " + Math.round(total_payment).toLocaleString() + "원, 총이자 " + Math.round(total_interest).toLocaleString() + "원";\n'
+            '  return out;\n};\n'
+            )
+        )
     if str(calc.get("slug", "")) == "four-insurances":
         fi_reg = (_registry().get("four-insurances") or {})
         ir = fi_reg.get("insurance_rates") or {}

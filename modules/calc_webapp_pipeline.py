@@ -51,14 +51,14 @@ def run_calc_webapp_once(cfg: dict, max_count: int = 1) -> dict:
         return {"produced": 0, "reason": "no_calculators"}
 
     try:
-        from adapters.db.factory import get_db_adapter
+        from adapters.db.factory import get_calculator_storage_adapter
         from repositories.calculator_repository import CalculatorRepository
         from modules import app_generator as AG
         from modules import github_deployer as GH
         from modules.review_center import pre_build_qa
         from modules.site_snapshot import write_site_snapshot, read_site_snapshot
 
-        repo = CalculatorRepository(get_db_adapter(cfg))
+        repo = CalculatorRepository(get_calculator_storage_adapter(cfg))
         calc = repo.get_by_id(calc_id)
         if not calc:
             LOG.warning("계산기 웹앱 스케줄 대상 없음(id=%s)", calc_id)
@@ -89,6 +89,20 @@ def run_calc_webapp_once(cfg: dict, max_count: int = 1) -> dict:
 
         LOG.info("계산기 웹앱 자동 실행 완료(id=%s, mode=%s, qa_pass=%s, deployed=%s)",
                  calc_id, mode, qa_pass, deployed)
+
+        # STEP76: 3-Way(SQLite/Sheets/_site) 이상감지 — observability 계층이라
+        # 이 호출이 실패해도 위 결과(생성/QA/배포)에는 절대 영향을 주지 않는다.
+        # run_three_way_anomaly_check_safely()는 내부적으로 모든 예외를 이미
+        # 흡수하지만, 이 운영 경로 자체를 절대 깨뜨리지 않는다는 원칙을 이중으로
+        # 보장하기 위해 호출부에서도 한 번 더 방어한다.
+        try:
+            from datetime import datetime as _dt
+            from modules.calculator_3way_sync import run_three_way_anomaly_check_safely
+            run_three_way_anomaly_check_safely(
+                cfg, run_id=f"calc_webapp_{_dt.now().strftime('%Y%m%d%H%M%S')}")
+        except Exception as _e3way:
+            LOG.warning("[3way] 이상감지 호출 자체 실패(운영 작업에는 영향 없음): %s", _e3way)
+
         return {
             "produced": 1,
             "published": {

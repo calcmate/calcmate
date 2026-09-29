@@ -98,3 +98,120 @@ income_tax_act_127:
   - '합산 원천징수세액 = 총 수입 × 3.3%'
   - '실수령액 = 총 수입 - 원천징수세액 = 총 수입 × 96.7%'
   - '※ 원천징수액은 선납 세액이며, 5월 종합소득세 신고 시 정산(환급 또는 추가납부)'
+
+# ── 지방세(자동차 취득세) 관련 entity — STEP 28-195/196에서 추가.
+# law.go.kr 원문은 JS 렌더링으로 직접 조회하지 못해 easylaw.go.kr/정부24/KB금융/lbox.kr 등
+# 2차 출처로 교차확인(STEP 28-188/189/190). confidence: medium — 원문 조문 전체 대조 미완료,
+# 미확정 부분은 각 writer_note에 ⚠️로 명시.
+local_tax_act_12:
+  law: 지방세법
+  article: 제12조
+  related_articles:
+  - 지방세법 시행령 제23조
+  authority: 행정안전부
+  confidence: medium
+  last_verified: 2026-08-29
+  verification_source:
+  - easylaw.go.kr
+  - 정부24(gov.kr)
+  - KB금융
+  needs_human_legal: true
+  writer_note: '지방세법 제12조에 따라 자동차 취득 시 표준세율이 차종별로 다르게 적용된다(비영업용
+    승용차 7%, 경차·영업용 4%, 승합·화물·특수차 5%, 이륜차 2%). 2011년 지방세법 개정(법률 제10221호,
+    2011-1-1 시행)으로 종전의 취득세와 등록세가 "취득세"로 통합되었으며, 현재는 별도의 "등록세"라는
+    세목이 존재하지 않는다(STEP 28-188 확정). ⚠️ law.go.kr 원문 전체 조문(항·호 세부 구성)은 직접
+    대조하지 못했다 — easylaw.go.kr/정부24/KB금융 등 2차 출처로 세율만 교차확인한 상태이며, 조문의
+    정확한 항·호 번호 및 예외 규정은 미확정이다.'
+  reviewer_expectation:
+  - 지방세법(제12조) 언급
+  - 2011년 취득세·등록세 통합 사실 언급(등록세라는 별도 세목이 현재 존재하지 않음)
+  - 차종별 세율이 다름을 명시
+  forbidden_articles:
+  - 지방세법 제6조
+  # IRP-29: 기존 "등록세"(단어 1개)는 계산기 자신의 정상 서비스명("취등록세")과
+  # reviewer_expectation이 요구하는 올바른 부정 설명("등록세라는 별도 세목이 존재하지
+  # 않는다")까지 부분 문자열로 걸러내는 과잉 차단이었다(IRP-28 진단). 실제로 막아야 하는
+  # 것은 "지금도 등록세를 별도로 낸다"는 폐기된 법령 인식에 기반한 잘못된 주장이므로,
+  # 다른 legal_master 엔티티(employment/labor/realty)와 동일한 문장형 관례로 교체한다.
+  forbidden_phrases:
+  - 등록세를 별도로 납부
+  - 등록세가 별도로 부과
+  calculation_flow:
+  - '표준세율 = RATE_MAP[car_type] (비영업승용 7% / 경차·영업용 4% / 승합·화물·특수 5% / 이륜차 2%)'
+  - '표준취득세액 = 차량가격 × 표준세율'
+
+local_tax_act_decree_23:
+  law: 지방세법 시행령
+  article: 제23조
+  related_articles:
+  - 지방세법 제12조
+  authority: 행정안전부
+  confidence: medium
+  last_verified: 2026-08-29
+  verification_source:
+  - easylaw.go.kr
+  - 정부24(gov.kr)
+  needs_human_legal: true
+  writer_note: '지방세법 시행령 제23조는 제12조 표준세율의 세부 적용 기준을 규정한다(STEP 28-188).
+    ⚠️ 시행령 원문 전체 조문은 law.go.kr에서 직접 대조하지 못했으며, 세부 항목(차종 세분류 기준,
+    적용 예외 등)은 미확정 상태로 남겨둔다 — 확정 전까지 단정적 서술을 추가하지 않는다.'
+  reviewer_expectation:
+  - 지방세법 시행령(제23조) 언급 시 제12조와 연계된 세부 규정임을 명시
+  forbidden_articles: []
+  forbidden_phrases: []
+  calculation_flow: []
+
+local_tax_special_act_67:
+  law: 지방세특례제한법
+  article: 제67조
+  related_articles:
+  - 지방세특례제한법 제177조의2
+  authority: 행정안전부
+  confidence: medium
+  last_verified: 2026-08-29
+  verification_source:
+  - lbox.kr
+  - easylaw.go.kr
+  needs_human_legal: true
+  writer_note: '지방세특례제한법 제67조에 따라 경형자동차(배기량 등 법정 기준 충족 차량)에 대해
+    취득세를 감면하되, 감면 대상 금액은 산출된 취득세액(차량가격이 아닌 세액) 기준 75만원 이하이며,
+    75만원을 초과하는 경우 초과분에 대해서만 과세한다(STEP 28-189 lbox.kr 확인). 지방세특례제한법
+    제177조의2(감면 최소납부제, 85% 한도)와의 관계는 이번 1차 구현에 반영하지 않았다(STEP 28-190/191
+    범위 확정). ⚠️ law.go.kr 원문 전체 조문 대조는 미완료.'
+  reviewer_expectation:
+  - 경형자동차 감면 한도가 "차량가격"이 아닌 "산출 세액" 기준 75만원임을 명시
+  - 75만원 초과분만 과세됨을 명시
+  forbidden_articles: []
+  forbidden_phrases:
+  - 차량가격 75만원 이하 무조건 면제
+  calculation_flow:
+  - '경형자동차 감면액 = min(표준취득세액, 750,000원)'
+  - '최종취득세액 = max(0, 표준취득세액 - 감면액)'
+
+local_tax_special_act_66_4:
+  law: 지방세특례제한법
+  article: 제66조제4항
+  related_articles: []
+  authority: 행정안전부
+  confidence: medium
+  last_verified: 2026-08-29
+  verification_source:
+  - 정부24(gov.kr)
+  - easylaw.go.kr
+  needs_human_legal: true
+  writer_note: '지방세특례제한법 제66조제4항에 따라 전기자동차·수소전기자동차 취득 시 취득세를
+    감면한다. 감면 한도는 산출된 취득세액 기준 140만원이며, 전기차는 2026-12-31까지, 수소차는
+    2027-12-31까지 한시 적용된다(STEP 28-190 확정). 하이브리드 자동차 감면은 2024-12-31자로
+    이미 일몰 종료되어 현재 감면 대상이 아니다. ⚠️ 2027-01-01부터 전기차 감면 한도가 100만원으로
+    축소될 예정이나, 이는 별도 법령 재검증 후 적용해야 하며 현재 entity와 계산 로직에는 반영하지
+    않았다(STEP 28-195 STEP 6 유지보수 항목). law.go.kr 원문 전체 조문 대조는 미완료.'
+  reviewer_expectation:
+  - 전기차·수소차 감면 한도가 세액 기준 140만원임을 명시
+  - 하이브리드는 감면 대상이 아님을 명시(2024-12-31 일몰 종료)
+  forbidden_articles: []
+  forbidden_phrases:
+  - 하이브리드 감면
+  - 2027년 이후에도 전기차 140만원 유지
+  calculation_flow:
+  - '친환경차 감면액 = min(표준취득세액, 1,400,000원) — 전기 2026-12-31까지, 수소 2027-12-31까지'
+  - '최종취득세액 = max(0, 표준취득세액 - 감면액)'

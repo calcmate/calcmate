@@ -295,7 +295,7 @@ def run_calculator_once(cfg: dict, max_count: int = None, only_cid: str = None, 
     # 1) 키워드 수집 (Calculator Collector)
     items = get_collector("calculator").collect(cfg, site=None)
     if not items:
-        LOG.info("활성 계산기 없음 — 종료 (Calculator Builder/시드로 등록 필요)")
+        LOG.info("활성 계산기 없음 — 종료 (App Factory/시드로 등록 필요)")
         return {"produced": 0, "reason": "no_calculators"}
 
     # 특정 계산기만 대상(only_cid) — 재평가 재도전 등에서 1개 계산기만 재생성할 때.

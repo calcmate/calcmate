@@ -7,7 +7,7 @@ app_templates 5종 + calculators 5종 샘플을 Repository 경유로 등록한�
 """
 import json
 
-from adapters.db.factory import get_db_adapter
+from adapters.db.factory import get_db_adapter, get_template_storage_adapter
 from repositories.calculator_repository import CalculatorRepository
 from repositories.template_repository import TemplateRepository
 from .calculator_template_engine import build_calculator_html
@@ -135,8 +135,7 @@ SAMPLE_CALCULATORS = [
 
 
 def seed_templates(cfg: dict) -> int:
-    db = get_db_adapter(cfg)
-    repo = TemplateRepository(db)
+    repo = TemplateRepository(get_template_storage_adapter(cfg))
     existing = {str(t.get("template_name", "")).strip() for t in repo.get_all()}
     cnt = 0
     for t in APP_TEMPLATES:
