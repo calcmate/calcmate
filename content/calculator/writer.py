@@ -45,30 +45,35 @@ def _load_valid_calculators_block(cfg: dict) -> str:
 
 def generate_article(cfg: dict, calc: dict, seo: dict = None, faq: list = None,
                      review: bool = False, example_context: dict = None, intent: str = None,
-                     law_ssot_block: str = "") -> str:
+                     law_ssot_block: str = "", *, _metadata_sink: dict = None) -> str:
     """블로그 본문 HTML 생성(2000자+). review=True면 Editor 검수 1회.
     law_ssot_block: modules.law_ssot.get_ssot_prompt_block(slug) 결과(SSOT 법정수치 지시문).
-    빈 문자열이면 기존과 동일하게 동작(no-op)."""
-    # HACK: Mocking to bypass AI dependency for production validation
-    # HACK: Mocking to bypass AI dependency for production validation
-    if "OPENAI_API_KEY" not in cfg:
-        example_str = json.dumps(example_context, ensure_ascii=False)
-        return (f"<h1>주휴수당 계산기</h1>"
-                f"<p>서론: 주휴수당에 대해 알아봅니다. 지급조건을 확인합니다.</p>"
-                f"<p>요약: 주휴수당을 계산기 목적으로 안내합니다. 정확한 계산이 중요합니다.</p>"
-                f"<h2>계산기 연결</h2><p>여기서 계산하세요: [계산기 링크]</p>"
-                f"<h2>계산 방법</h2><p>시급과 주당 시간을 곱합니다. 주당 40시간 이상 근무 시 주휴수당이 발생하며, 계산 기준은 명확합니다. 법령 근거는 근로기준법 제55조입니다.</p>"
-                f"<h2>지급 조건</h2><p>15시간 이상 근무자가 대상입니다. 주 5일 근무가 원칙이며, 지급조건을 충족해야 합니다.</p>"
-                f"<h2>계산 예시</h2><p>검증된 데이터: {example_str}</p><p>위 데이터를 바탕으로 계산방법을 적용하면 정확한 수치가 나옵니다.</p>"
-                f"<h2>주의사항</h2><p>15시간 미만은 대상 제외입니다. 계산 시 오류를 범하지 않도록 주의하세요.</p>"
-                f"<h2>FAQ</h2><p>주휴수당 대상은? 15시간 이상 근로자입니다.</p>"
-                f"<h2>출처</h2><p>근로기준법 제55조, 고용노동부 공식 안내</p>")
+    빈 문자열이면 기존과 동일하게 동작(no-op).
 
+    OPENAI_API_KEY 등 provider 자격 증명이 없으면 build_provider_for_role()이 자연스럽게
+    KeyError를 던지고, retry_call()이 재시도 후 그대로 전파한다(운영 모드에서 mock 결과가
+    정상 생성 결과처럼 보이면 안 되므로 — 계산기와 무관한 하드코딩된 mock 본문을 반환하던
+    이전 동작(P0-4에서 제거됨)은 계산기 종류에 관계없이 동일한 mock이 저장되는 cross-
+    calculator contamination 버그였다). SEO/FAQ/이미지 생성기와 달리 본문은 실패 시
+    calc-특정적 안전 기본값이 없으므로, 여기서는 예외를 그대로 올려 호출측이 "생성 실패"로
+    명확히 처리하도록 한다.
+
+    _metadata_sink: CALCMATE-BLOG-GEN-METADATA-03 — 재현성 metadata 수집 전용 선택적
+    keyword-only 인자. None이 아니면, 실제로 이 호출에서 LLM에 전달된 (system, user,
+    provider, model)을 이 dict에 그대로 채운다(반환형은 여전히 str로 무변경). 호출마다
+    새로 생성된 개별 dict만 전달되므로 모듈 전역 상태를 전혀 사용하지 않는다 — 동시
+    호출 간 값이 섞일 수 없다."""
     valid_calculators = _load_valid_calculators_block(cfg)
     system, user = PM.get_article_prompt(calc, seo, faq, example_context, intent=intent,
                                           law_ssot_block=law_ssot_block,
                                           valid_calculators=valid_calculators)
     provider, model = build_provider_for_role("writing", cfg)   # MODEL_WRITER
+
+    if _metadata_sink is not None:
+        _metadata_sink["system"] = system
+        _metadata_sink["user"] = user
+        _metadata_sink["provider"] = type(provider).__name__
+        _metadata_sink["model"] = model
 
     def _call():
         return provider.chat(system, user, model, max_tokens=4000)
@@ -101,13 +106,31 @@ def generate_article(cfg: dict, calc: dict, seo: dict = None, faq: list = None,
 
 
 def auto_generate_all(cfg: dict, calc: dict, save: bool = True, review: bool = False,
-                      auto_review: bool = True, example_context: dict = None) -> dict:
+                      auto_review: bool = True, example_context: dict = None,
+                      protect_existing: bool = False) -> dict:
     """전체 자동 생성: SEO→FAQ→본문→이미지프롬프트→(AI Reviewer 검수/자동수정)→DB저장.
     calc는 calculators 행(dict, 'id' 포함). 반환: 생성 결과 dict(review_* 포함).
-    auto_review=True면 calculator_reviewer로 검수 후 REWRITE 시 자동 재생성."""
+    auto_review=True면 calculator_reviewer로 검수 후 REWRITE 시 자동 재생성.
+    protect_existing=True면 기존 article_content가 존재하면 DB 저장을 건너뜀 (Golden 10 보호)."""
     name = calc.get("name", "")
     slug = calc.get("slug", "")
-    LOG.info("[auto-gen] 시작: %s", name)
+    LOG.info("[auto-gen] 시작: %s (slug=%s)", name, slug)
+
+    # ── Golden 10 보호장치 ──
+    # protect_existing=True이거나 slug가 Golden 10인 경우,
+    # 기존 article_content가 있으면 덮어쓰지 않는다.
+    _is_protected = False
+    if protect_existing and calc.get("article_content"):
+        _is_protected = True
+        LOG.info("[auto-gen] 기존 콘텐츠 보호: %s — article_content 존재, DB 저장 건너뜀", slug)
+    else:
+        try:
+            from content.blog import is_golden10
+            if is_golden10(slug) and calc.get("article_content"):
+                _is_protected = True
+                LOG.info("[auto-gen] Golden 10 보호: %s — article_content 존재, DB 저장 건너뜀", slug)
+        except Exception:
+            pass
 
     # 1) SEO
     try:
@@ -197,8 +220,9 @@ def auto_generate_all(cfg: dict, calc: dict, save: bool = True, review: bool = F
         "image_prompt_body": img["body"],
     }
     result.update(review_fields)   # review_status/score/reason/attempts/reviewed_at
-    # DB payload는 위 result 스냅샷만 사용(update_generated에 그대로 전달되므로
-    # _legal_current_* 같은 내부 메타는 DB 저장 뒤에 result에 추가한다 — 아래 _saved와 동일 패턴).
+    # DB payload는 위 result 스냅샷 + STEP 28-52 추적 필드만 사용(update_generated에
+    # 그대로 전달되므로 _legal_current_* 같은 내부 메타는 DB 저장 뒤에 result에
+    # 추가한다 — 아래 _saved와 동일 패턴).
     _db_payload = dict(result)
     _db_payload.update(_tracking_fields)
     result["_legal_current_passed"] = not _legal_fails
@@ -207,7 +231,7 @@ def auto_generate_all(cfg: dict, calc: dict, save: bool = True, review: bool = F
     result["_g_calc_failures"] = _g_calc_fails
 
     # 6) DB 저장 (Repository 경유)
-    if save and calc.get("id"):
+    if save and calc.get("id") and not _is_protected:
         try:
             from adapters.db.factory import get_db_adapter
             from repositories.calculator_repository import CalculatorRepository
@@ -218,4 +242,8 @@ def auto_generate_all(cfg: dict, calc: dict, save: bool = True, review: bool = F
             LOG.error("[auto-gen] 저장 실패(시트 권한 확인): %s", e)
             result["_saved"] = False
             result["_save_error"] = str(e)
+    elif _is_protected:
+        LOG.info("[auto-gen] 보호 모드: DB 저장 건너뜀 — %s", name)
+        result["_saved"] = False
+        result["_protection"] = "existing_content_protected"
     return result

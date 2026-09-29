@@ -157,6 +157,7 @@ def generate_blog_article(cfg: dict, post: dict, intent: str = None,
         example_context=example_context,
         intent=intent,
         law_ssot_block=law_ssot_block,
+        _metadata_sink=_metadata_sink,
     )
 
 
@@ -364,6 +365,22 @@ def auto_generate_blog_all(cfg: dict, post: dict, save: bool = True,
     if not _blocked:
         final_html = build_blog_html(article, faq=faq, calc_slug=post.get("slug", ""),
                                      calc_name=post.get("name", ""))
+        # CALCMATE-BLOG-FAQ-FALLBACK-INTEGRITY-FIX-01: build_blog_html()이 gate 이후에 덧붙이는
+        # DB FAQ fallback 우회를 막기 위해 최종 HTML에 G-CODE-EXPR만 한 번 더 적용한다.
+        # 기존 run_integrity_gates() 순서/결과는 그대로 두고, 전체 gate 재실행은 하지 않는다
+        # (시스템 삽입 링크로 G-AI-LINK 등이 오탐하므로).
+        from modules.content_integrity import check_g_code_expr
+        _final_code_fails = [
+            dict(f, detail=f"[final_html] {f.get('detail', '')}")
+            for f in check_g_code_expr(final_html)
+        ]
+        if _final_code_fails:
+            LOG.warning("[blog-auto-gen] 최종 HTML G-CODE-EXPR 차단(slug=%s): %s",
+                        post.get("slug", ""), [f.get("detail") for f in _final_code_fails])
+            _failed = _failed + _final_code_fails
+            _passed = [g for g in _passed if g != "G-CODE-EXPR"]
+            _blocked = True
+            final_html = ""
 
     # CALCMATE-BLOG-GEN-METADATA-03: 기존 반환 dict에 additive하게만 추가한다.
     # 위 article/final_html/_blocked/_passed/_failed 계산 로직은 한 줄도 바뀌지 않았다.

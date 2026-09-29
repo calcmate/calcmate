@@ -83,8 +83,8 @@ BLOG_SCHEDULE:
   enabled: false
   mode: draft
   publish_slots:
-  - start: "10:00"
-    end: "10:30"
+  - start: '10:00'
+    end: '10:30'
   weekday_only: false
 CONTENT_SYNC:
   enabled: true
@@ -126,7 +126,7 @@ AI_STYLE_BLOCKLIST:
 - 완벽하게 이해
 - 이해하셨을 것입니다
 - 다양한 조건에 따라 달라질 수 있습니다
-SITE_MODE: pre_adsense
+SITE_MODE: cpa
 SHOW_ADSENSE: false
 SHOW_CPA: false
 SHOW_SHARE: true
@@ -136,13 +136,14 @@ SHOW_FAQ: true
 SHOW_NOTICE: true
 SHOW_RELATED: true
 SHOW_DETAIL: true
-RESULT_EXPORT_TYPE: png
-KAKAO_JS_KEY: ''
-CALCULATOR_VERSION: 2.0.0
-LAW_VERSION: 2026-07
-
-# P2-3 자동 리라이트 설정 (CLI 전용. 스케줄러 자동 연결 없음)
-REWRITE_STALE_DAYS: 365          # time-based 기준: 발행 후 이 일수 경과 시 리라이트 후보
-REWRITE_COOLDOWN_DAYS: 90        # time-based 쿨다운: 마지막 rewrite_success 후 이 일수 이내 SKIP
-DAILY_REWRITE_LIMIT: 1           # 1회 실행당 최대 리라이트 건수 (안전 제한값)
-REWRITE_CHANGE_SEVERITY_MIN: MEDIUM  # RMS 최소 severity (wording_changed=LOW 자동 제외)
+RESULT_EXPORT_TYPE: pdf
+KAKAO_JS_KEY: test_key
+CALCULATOR_VERSION: 3.0.0
+LAW_VERSION: 2027-01
+REWRITE_STALE_DAYS: 365
+REWRITE_COOLDOWN_DAYS: 90
+DAILY_REWRITE_LIMIT: 1
+REWRITE_CHANGE_SEVERITY_MIN: MEDIUM
+AUTO_PUBLISHING:
+  enabled: false
+TELEGRAM_CHAT_ID: x

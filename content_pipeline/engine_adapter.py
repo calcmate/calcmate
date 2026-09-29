@@ -7,11 +7,11 @@ from .example_context_builder import ExampleContextBuilder
 from .metadata_builder import MetadataBuilder
 from .image_builder import ImageBuilder
 from .wordpress_media_uploader import WordPressMediaUploader
-from modules.config_loader import load_config
+from .publisher_base import NullMediaUploader
 from tests.test_weekly_holiday_compute import compute_weekly_allowance
 
 class EngineAdapter:
-    def __init__(self):
+    def __init__(self, media_uploader=None):
         self.gap_analyzer = ContentGapAnalyzer()
         self.improvement_gen = ImprovementGenerator()
         self.faq_gen = FAQGenerator()
@@ -20,7 +20,12 @@ class EngineAdapter:
         self.context_builder = ExampleContextBuilder()
         self.meta_builder = MetadataBuilder()
         self.img_builder = ImageBuilder()
-        self.media_uploader = WordPressMediaUploader(load_config())
+        # DI: media_uploader를 명시적으로 넘기지 않으면 안전한 NullMediaUploader를 사용한다.
+        # 실제 WordPressMediaUploader(및 그에 필요한 load_config()/secrets.yaml)를
+        # 자동으로 생성하지 않는다. 실제 업로드가 필요하면
+        # EngineAdapter(media_uploader=WordPressMediaUploader(load_config()))처럼
+        # 명시적으로 주입한다.
+        self.media_uploader = media_uploader if media_uploader is not None else NullMediaUploader()
 
     # ... run_h4b unchanged ...
     

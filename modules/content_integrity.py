@@ -1081,6 +1081,35 @@ def check_g_health_disclaimer(body_html: str, intent: str | None = None) -> list
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G-CODE-EXPR : 내부 계산식(코드 표현) 노출 차단
+# ═══════════════════════════════════════════════════════════════════════════
+# G-HTML-CLEAN은 사람이 읽는 정상 산술식(예: 3,000,000 × 0.0475)을 의도적으로
+# 검사하지 않는다. 이 게이트는 그와 겹치지 않도록 내부 실행식에만 있는 표현
+# (영문 snake_case 변수명, 함수 호출형, 파이썬 거듭제곱 **)만 본다.
+_CODE_SNAKE_RE = re.compile(r"\b[a-z]{2,}(?:_[a-z0-9]+)+\b")
+_CODE_CALL_RE = re.compile(r"\b(?:clamp|min|max|round|abs|int|float)\s*\(")
+_CODE_POW_RE = re.compile(r"\*\*")
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def check_g_code_expr(body_html: str) -> list[dict]:
+    """사용자 본문 텍스트(태그·URL 제거 후)에 내부 계산식 표현이 남아 있으면 major."""
+    text = _URL_RE.sub(" ", _strip_html(body_html))
+    hits: list[str] = []
+    hits += _CODE_SNAKE_RE.findall(text)
+    hits += [m.group(0) for m in _CODE_CALL_RE.finditer(text)]
+    hits += _CODE_POW_RE.findall(text)
+    if not hits:
+        return []
+    unique = sorted(set(hits))
+    return [{
+        "gate": "G-CODE-EXPR",
+        "grade": "major",
+        "detail": f"본문에 내부 계산식 표현 노출 {len(hits)}건: {unique[:5]}",
+    }]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # 통합 실행 함수
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -1093,6 +1122,8 @@ _ALL_GATES = {
     "G-FAQ-DUP",
     # STEP156
     "G-HEALTH-DISCLAIMER",
+    # CALCMATE-BLOG-FORMULA-PRESENTATION-IMPLEMENT-01
+    "G-CODE-EXPR",
 }
 
 
@@ -1123,6 +1154,7 @@ def run_integrity_gates(
     all_failed.extend(check_g_html_clean(body_html))
     all_failed.extend(check_g_faq_dup(body_html, calculator_faq=calculator_faq))
     all_failed.extend(check_g_health_disclaimer(body_html, intent=intent))
+    all_failed.extend(check_g_code_expr(body_html))
 
     failed_names = {f["gate"] for f in all_failed}
     passed = sorted(_ALL_GATES - failed_names)

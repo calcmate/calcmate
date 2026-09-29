@@ -11,6 +11,10 @@ import yaml
 import os
 import sys
 
+from .logger import get_logger
+
+LOG = get_logger()
+
 REQUIRED_MODELS = [
     "MODEL_ORCHESTRATOR", "MODEL_PLANNER", "MODEL_WRITER",
     "MODEL_EDITOR", "MODEL_CLEANER"
@@ -110,6 +114,25 @@ def load_config(path: str = None, *, wp_target: str = None) -> dict:
     cfg = _normalize(cfg)
     cfg = _apply_wp_target(cfg, wp_target)
     _validate(cfg)
+    # CALCMATE-BLOG-GEN-METADATA-03: 이 cfg가 공식 경로(load_config())로 만들어졌음을
+    # 표시하는 provenance marker. 수동으로 cfg dict를 구성하는 호출부는 이 키 자체가
+    # 없으므로 소비 측에서 cfg.get("_config_source", "unknown")으로 안전하게 구분한다.
+    cfg["_config_source"] = "load_config"
+
+    # CALCMATE-TELEGRAM-RUNTIME-CFG-LOADER-INSTRUMENT-01: runtime credentials presence 진단
+    # TELEGRAM_DEBUG=1 환경변수일 때만 출력 (기본 동작 영향 없음)
+    if os.getenv("TELEGRAM_DEBUG") == "1":
+        try:
+            safe_path = "config.yaml"
+            if path and "instances" in path:
+                safe_path = "instance/config.yaml"
+            LOG.debug("Config runtime cfg pid=%d source=%s path=%s token_present=%s chat_id_present=%s",
+                      os.getpid(), cfg.get("_config_source", "unknown"), safe_path,
+                      "true" if cfg.get("TELEGRAM_BOT_TOKEN") else "false",
+                      "true" if cfg.get("TELEGRAM_CHAT_ID") else "false")
+        except Exception:
+            pass
+
     return cfg
 
 

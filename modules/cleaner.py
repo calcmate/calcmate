@@ -113,9 +113,12 @@ def normalize_pre_blocks(html: str) -> str:
 
 def normalize_html_output(html: str) -> str:
     """콘텐츠 생성 최종 단계의 HTML 정규화 진입점.
-    <pre> 정규화 후 Markdown bold 정규화 순으로 적용한다."""
+    <pre> 정규화 후 Markdown bold 정규화 순으로 적용한다.
+    malformed closing tag(</</p>, </</dd> 등)도 정리한다."""
     if not html:
         return html
     html = normalize_pre_blocks(html)
     html = normalize_bold_markdown(html)
+    # malformed closing tag 방어: </</tag> → </tag>
+    html = re.sub(r'</</([a-zA-Z][a-zA-Z0-9]*)>', r'</\1>', html)
     return html

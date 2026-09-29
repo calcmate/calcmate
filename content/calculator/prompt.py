@@ -68,13 +68,29 @@ def _get_intent_from_category(calc: dict) -> str:
     return _CATEGORY_TO_INTENT.get(category.strip(), 'general_calculator')
 
 
+# 내부 실행식(formula)이 본문·FAQ에 그대로 옮겨지는 것을 막는 지시. _ctx()를 쓰는
+# 모든 프롬프트(본문/FAQ/SEO/CTA/이미지)에 함께 들어간다.
+FORMULA_PRESENTATION_RULE = (
+    "[계산공식 표기 규칙 — 반드시 준수]\n"
+    "- 위 '계산공식'은 시스템 내부 실행식이며 계산 구조를 이해하기 위한 참고용이다.\n"
+    "- 본문·FAQ에 내부 변수명(영문 소문자와 밑줄로 된 이름), 함수 호출(clamp(), min(), max() 등), "
+    "프로그래밍 연산자(** 등)를 그대로 쓰지 않는다.\n"
+    "- 계산 방법은 한국어 항목명과 사람이 이해할 수 있는 문장·계산식으로 설명한다(예: '국민연금 = 기준소득월액 × 4.75%').\n"
+    "- 비율은 가능한 경우 % 형태로 표기한다.\n"
+    "- 요율·기준금액 등 숫자는 법정수치 지시문과 [검증된 계산 데이터]를 따르며, 내부 실행식의 숫자와 다르면 "
+    "법정수치 지시문과 [검증된 계산 데이터]를 우선한다.\n"
+    "- 계산 예시의 입력값과 결과 숫자는 생략하거나 변경하지 않는다."
+)
+
+
 def _ctx(calc: dict) -> str:
     return (f"계산기명: {calc.get('name','')}\n"
             f"카테고리: {calc.get('category','')}\n"
             f"설명: {calc.get('seo_desc','') or calc.get('seo_description','')}\n"
-            f"계산공식: {calc.get('formula','')}\n"
+            f"계산공식(내부 실행식 — 참고용, 본문·FAQ에 그대로 노출 금지): {calc.get('formula','')}\n"
             f"입력항목: {calc.get('input_schema','')}\n"
-            f"출력항목: {calc.get('output_schema','')}")
+            f"출력항목: {calc.get('output_schema','')}\n"
+            f"{FORMULA_PRESENTATION_RULE}")
 
 
 def get_seo_prompt(calc: dict) -> tuple:
