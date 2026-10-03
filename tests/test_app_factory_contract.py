@@ -641,6 +641,30 @@ class TestReviewCenterNewItems:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestReadyGateWithSchemaMatch:
+    @pytest.fixture(autouse=True)
+    def _isolated_registry(self, monkeypatch, tmp_path):
+        """CALCMATE-TEST-ISOLATION-FIX-04: promote_to_ready()는 체크리스트 게이트를 통과하면
+        app_factory._REG_DIR/{category}_af.yaml을 다시 쓴다. 격리하지 않으면 실제 운영
+        docs/registry/labor_af.yaml이 테스트 중에 다시 쓰였다("노동/고용법"은 매핑에 없어
+        labor_af로 폴백, 실제 파일에 annual-leave-remaining이 있음). 다른 App Factory 테스트와
+        같은 방식으로 _REG_DIR을 tmp_path로 돌리고, 실제 파일과 같은 조건(해당 slug가 HOLD로
+        들어 있는 labor_af.yaml)만 최소로 재현한다. load_registry_v3는 각 테스트가 그대로 mock한다."""
+        import modules.app_factory as af
+        import modules.registry_loader as rl
+        reg_dir = tmp_path / "registry"
+        reg_dir.mkdir()
+        (reg_dir / "labor_af.yaml").write_text(
+            "annual-leave-remaining:\n"
+            "  slug: annual-leave-remaining\n"
+            "  source: app_factory\n"
+            "  status: HOLD\n"
+            "  category: 노동/고용법\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(af, "_REG_DIR", reg_dir)
+        monkeypatch.setattr(rl, "_REG_DIR", reg_dir)
+        self.reg_dir = reg_dir
+
     def test_ready_blocked_when_schema_match_unchecked(self):
         """schema_match(critical) 미완료 시 promote_to_ready() 차단."""
         from modules.app_factory import promote_to_ready
@@ -686,6 +710,9 @@ class TestReadyGateWithSchemaMatch:
         if not ok:
             assert "미완료" not in msg and "필수" not in msg, \
                 f"schema_match 완료됐는데 체크리스트 게이트에서 차단됨: {msg}"
+        else:
+            # FIX-04: 전환 결과는 격리된 임시 Registry에만 기록돼야 한다.
+            assert "status: READY" in (self.reg_dir / "labor_af.yaml").read_text(encoding="utf-8")
 
     def test_ready_blocked_with_multiple_unchecked_critical(self):
         """여러 critical 미완료 → 모두 차단 메시지에 포함."""
