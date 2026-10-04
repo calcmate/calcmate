@@ -69,7 +69,7 @@
 | Vite proxy | `/api` → `http://127.0.0.1:8000` | `frontend/vite.config.js` |
 | FastAPI | 공식 backend, 라우터 14개 mount | `api/main.py` (`app = FastAPI`) |
 | 실행 스크립트 | `start_dashboard.bat` (untracked): uvicorn `--host 127.0.0.1 --port 8000` + Vite `127.0.0.1:5173` | `start_dashboard.bat:69`, `:93` |
-| Streamlit | **legacy / 폐기 예정.** `dashboard.py`(import streamlit L5), 실행 스크립트 `scripts/run_dashboard.bat`, `start_dashboard_autostart.bat`, `install.bat` | 신규 기능 연결 금지 |
+| Streamlit | **제거됨.** `dashboard.py` 삭제(`6c9f78c`), `scripts/install.bat`의 Streamlit 실행 블록 제거. 삭제된 legacy launcher: `scripts/run_dashboard.bat`, `scripts/start_dashboard_autostart.bat` | 재도입 금지 |
 | 인증 | `CALCMATE_DASHBOARD_LOCAL_MODE=1`(Windows 사용자 환경변수)이면 모든 요청이 local-admin | `api/auth/dependencies.py` |
 | CORS / Origin 검사 | 없음 (HARDEN-01, HOLD) | `api/` 전체 검색 |
 | 프론트엔드 커밋 상태 | `frontend/src`는 10개 파일만 tracked. `Calculators.jsx`, `CalculatorDetail.jsx` 등 대부분 untracked | `git ls-files` |

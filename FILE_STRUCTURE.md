@@ -70,7 +70,7 @@
 | `calculator_reviewer.py` | **GPT 검수(CALC_REVIEW_*) + total 항목평균 정규화 + auto_review_and_fix** | ✅ |
 | `calculator_{seo,faq,content,image_prompt}_generator.py` | SEO/FAQ/본문/이미지프롬프트 | ✅ |
 | `calculator_prompt_manager.py` / `calculator_pipeline.py` | 프롬프트 중앙관리 / 계산기 파이프라인 | ✅ |
-| `calculator_seed.py`·`calculator_seeder.py` | 초기 5종 시드(**upsert_by_slug로 본문 보존**) | ✅ |
+| `calculator_seed.py` | 초기 5종 시드(**upsert_by_slug로 본문 보존**, `main.py --seed-calculators` → `seed_all`). 구 `calculator_seeder.py`는 삭제됨 | ✅ |
 | `github_deployer.py` / `internal_link_engine.py` / `site_mode_manager.py` | 배포 / 내부링크 / 노출모드 | 🟡/✅/✅ |
 
 ## modules/ — AI/공통/운영
