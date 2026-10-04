@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import BlogSchedulerPanel from '../components/BlogSchedulerPanel.jsx'
+import TopicReconciliationPanel from '../components/TopicReconciliationPanel.jsx'
 import { getContentSyncStatus } from '../api/client.js'
 
 // /blog-scheduler — 블로그 스케줄 통합 화면
@@ -49,6 +50,7 @@ export default function BlogScheduler() {
           </div>
           {loading && <p className="status-card__hint">상태 확인 중...</p>}
         </div>
+        <TopicReconciliationPanel />
       </div>
     </div>
   )

@@ -28,3 +28,4 @@ data/workspace/*
 *credentials*
 *token*
 *api_key*
+/frontend/node_modules/

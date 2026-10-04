@@ -490,8 +490,12 @@ export function postPipelineRunOnce() {
 // STEP S13: Dashboard Quick Action 「▶ 실행」(통합 실행) 수동 실행(require_admin).
 // site의 활성 platforms에 따라 Calculator/Blog Pipeline 중 하나(또는 순차)를
 // 서버가 고른다 — order는 둘 다 활성일 때만 의미가 있다(기본값 "순차").
-export function postIntegratedRunOnce(order) {
-  return sendJson('/api/scheduler/integrated/run-once', 'POST', { order })
+// CURRENT-SITE-02: siteId(현재 Site 선택)를 함께 보낸다. 서버가 site를 다시 조회해
+// 그 site의 platforms로 분기한다(생략하면 서버 기본값 = 전체 site 목록의 첫 번째).
+export function postIntegratedRunOnce(order, siteId) {
+  const body = { order }
+  if (siteId) body.site_id = siteId
+  return sendJson('/api/scheduler/integrated/run-once', 'POST', body)
 }
 
 // ── STEP 18-M: Settings/Health 조회(GET만 — 새 쓰기 함수는 추가하지 않는다) ──
@@ -619,4 +623,224 @@ export function getCalculatorDisplaySettings() {
 
 export function patchCalculatorDisplaySettings(updates) {
   return sendJson('/api/settings/calculator-display', 'PATCH', updates)
+}
+
+// ── CALCMATE-REMAINING-DASHBOARD-KEEP-MIGRATION-01 ──────────────────────────
+// Streamlit dashboard.py "🔧 설정"(파이프라인 모델 매칭/운영 설정/TELEGRAM_EVENTS/
+// 텔레그램 테스트), "⬇️ 사이트 Export", "🔍 published Topic ↔ WP 상태 대조" 이관.
+
+export function getOperationsSettings() {
+  return getJsonAuth('/api/settings/operations')
+}
+
+export function patchOperationsSettings(updates) {
+  return sendJson('/api/settings/operations', 'PATCH', updates)
+}
+
+// 이름에 외부 서비스명을 넣지 않는다 — SettingsHealth.test.jsx가 client export 이름에
+// wordpress/github/cloudflare/telegram/sheets가 없음을 검사한다(getExternalHealth와 같은 관례).
+// 호출 대상은 우리 백엔드 POST /api/settings/telegram/test 그대로다.
+export function postNotifyConnectionTest(payload = {}) {
+  return sendJson('/api/settings/telegram/test', 'POST', payload)
+}
+
+export function getSitesExport() {
+  return getJsonAuth('/api/sites/export')
+}
+
+export function postTopicWpCheck(topicId) {
+  return sendJson(`/api/scheduler/topics/${encodeURIComponent(topicId)}/wp-check`, 'POST', {})
+}
+
+export function postTopicRevertCandidate(topicId) {
+  return sendJson(`/api/scheduler/topics/${encodeURIComponent(topicId)}/revert-candidate`, 'POST', { confirm: true })
+}
+
+// CALCMATE-REMAINING-MIGRATION-SMALL-GAPS-02
+// dashboard.py "📝 글 생성(1건)" — main.run_once(cfg, max_count=1). 파이프라인 전량
+// 실행(postPipelineRunOnce)·Blog Scheduler 실행(runBlogSchedulerOnce)과 다른 기능이다.
+export function postPipelineRunOne() {
+  return sendJson('/api/scheduler/pipeline/run-one', 'POST')
+}
+
+// dashboard.py "🔌 WordPress 연결 테스트". 서버가 연결을 시도하고 결과만 돌려준다.
+// (이름에 서비스명을 넣지 않는 기존 규칙 — SettingsHealth 테스트 참고)
+export function postPublishConnectionTest(payload = {}) {
+  return sendJson('/api/settings/wordpress/test', 'POST', payload)
+}
+
+// Mode A 생성 → 검토 → 저장/폐기. 진행 상태는 getCalculatorGenerationJob()으로 조회한다.
+// 동시 생성 거부가 HTTP 409(detail)로 오므로 postCalculatorGenerate()와 같이 status를 함께 반환한다.
+export async function postCalculatorPreviewGenerate(payload) {
+  try {
+    const res = await fetch(`${BASE_URL}/api/calculators/generate/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(payload),
+    })
+    const body = await res.json()
+    return { status: res.status, body }
+  } catch (err) {
+    return { status: 0, body: networkErrorEnvelope(err) }
+  }
+}
+
+export function postCalculatorPreviewSave(jobId, slug) {
+  return sendJson(`/api/calculators/generate/preview/${encodeURIComponent(jobId)}/save`, 'POST', { slug })
+}
+
+export function postCalculatorPreviewDiscard(jobId) {
+  return sendJson(`/api/calculators/generate/preview/${encodeURIComponent(jobId)}/discard`, 'POST')
+}
+
+// CALCMATE-STREAMLIT-REMAINING-MIGRATION-APP-FACTORY-02 — App Factory AI 추천(require_admin).
+// 추천은 표시/입력 보조일 뿐 생성·저장·배포를 일으키지 않는다.
+export function postAiSuggestIdea(keyword) {
+  return sendJson('/api/calculators/ai/suggest-idea', 'POST', { keyword: keyword || null })
+}
+
+export function postAiSuggestMode(payload) {
+  return sendJson('/api/calculators/ai/suggest-mode', 'POST', payload)
+}
+
+export function postAiSuggestTier(payload) {
+  return sendJson('/api/calculators/ai/suggest-tier', 'POST', payload)
+}
+
+// Tier2-B(날짜형) 키워드 감지 — 규칙은 서버에만 있다(AI 호출 없음).
+export function postAiTier2bDetect(payload) {
+  return sendJson('/api/calculators/ai/tier2b-keywords', 'POST', payload)
+}
+
+export function postAiSuggestSpec(payload) {
+  return sendJson('/api/calculators/ai/suggest-spec', 'POST', payload)
+}
+
+// success=true여도 확정이 아니다 — 확정은 postContractConfirmFormula()(서버 재검증).
+export function postAiSuggestFormula(payload) {
+  return sendJson('/api/calculators/ai/suggest-formula', 'POST', payload)
+}
+
+export function postContractSlugSuggest(name) {
+  return sendJson('/api/calculators/generate/contract/slug-suggest', 'POST', { name })
+}
+
+// body 없음 — 서버가 job에 저장된 Contract formula를 다시 검증해 확정 여부를 결정한다.
+export function postContractConfirmFormula(jobId) {
+  return sendJson(`/api/calculators/generate/contract/${encodeURIComponent(jobId)}/confirm-formula`, 'POST')
+}
+
+// SITE-PAGE-DEPLOYMENT-02 — 사이트 공통 페이지(전역 설정 기준 9개) 미리보기/로컬 저장/배포(require_admin).
+// 배포는 서버가 로컬 Git으로 9개 파일만 1회 commit 후 원격과 동기화된 경우에만 push한다.
+export function postSitePagesPreview() {
+  return sendJson('/api/sites/pages/preview', 'POST')
+}
+
+export function postSitePagesSave() {
+  return sendJson('/api/sites/pages/save', 'POST')
+}
+
+export function postSitePagesDeploy() {
+  return sendJson('/api/sites/pages/deploy', 'POST')
+}
+
+// CALCMATE-STREAMLIT-REMAINING-MIGRATION-AI-ASSISTANT-02 — AI Assistant(운영비서). 전부 require_admin.
+// 대화 기록은 서버에 저장되지 않는다(요청마다 messages를 보냄). 경로 검증·민감 파일 차단·
+// 승인 재검증은 서버가 한다.
+export function getAssistantModels() {
+  return getJsonAuth('/api/assistant/models')
+}
+
+export function postAssistantChat(model, messages) {
+  return sendJson('/api/assistant/chat', 'POST', { model, messages })
+}
+
+export function postAssistantFilesList(path) {
+  return sendJson('/api/assistant/files/list', 'POST', { path })
+}
+
+export function postAssistantFileRead(path) {
+  return sendJson('/api/assistant/files/read', 'POST', { path })
+}
+
+export function postAssistantFilePreview(path, content) {
+  return sendJson('/api/assistant/files/preview', 'POST', { path, content })
+}
+
+export function postAssistantFileWrite(path, content, expectedOldSha256) {
+  return sendJson('/api/assistant/files/write', 'POST', { path, content, expected_old_sha256: expectedOldSha256 })
+}
+
+export function postAssistantFileCreate(path, content) {
+  return sendJson('/api/assistant/files/create', 'POST', { path, content })
+}
+
+export function getAssistantMemory() {
+  return getJsonAuth('/api/assistant/memory')
+}
+
+export function postAssistantMemory(kind, text) {
+  return sendJson('/api/assistant/memory', 'POST', { kind, text })
+}
+
+export function getAssistantTasks() {
+  return getJsonAuth('/api/assistant/tasks')
+}
+
+export function postAssistantTask(title) {
+  return sendJson('/api/assistant/tasks', 'POST', { title })
+}
+
+export function patchAssistantTask(taskId, status) {
+  return sendJson(`/api/assistant/tasks/${encodeURIComponent(taskId)}`, 'PATCH', { status })
+}
+
+// CALCMATE-STREAMLIT-REMAINING-MIGRATION-AI-WORKSPACE-02 — AI Workspace(/api/workspace/*, require_admin).
+// context는 선택값(file/repo/structure)만 보내며 서버가 만든다. 대화 기록은 서버에 저장되지 않는다.
+export function getWorkspaceModels() {
+  return getJsonAuth('/api/workspace/models')
+}
+
+export function getWorkspaceContextFiles() {
+  return getJsonAuth('/api/workspace/context/files')
+}
+
+export function postWorkspaceChat(role, messages, context) {
+  return sendJson('/api/workspace/chat', 'POST', { role, messages, context })
+}
+
+export function postWorkspaceSandbox(name, content, overwrite = false) {
+  return sendJson('/api/workspace/files/sandbox', 'POST', { name, content, overwrite })
+}
+
+export function postWorkspaceFilePreview(path, content) {
+  return sendJson('/api/workspace/files/preview', 'POST', { path, content })
+}
+
+export function postWorkspaceFileWrite(path, content, expectedOldSha256) {
+  return sendJson('/api/workspace/files/write', 'POST', { path, content, expected_old_sha256: expectedOldSha256 })
+}
+
+export function postWorkspaceFileCreate(path, content) {
+  return sendJson('/api/workspace/files/create', 'POST', { path, content })
+}
+
+// CALCMATE-STREAMLIT-REMAINING-MIGRATION-GAP-01-03-IMPLEMENT-01 — 전부 require_admin.
+// GAP-01 상태토글: status는 'active' | 'inactive'만(서버 재검증).
+export function postCalculatorStatus(slug, status) {
+  return sendJson(`/api/calculators/${encodeURIComponent(slug)}/status`, 'POST', { status })
+}
+
+// GAP-02 삭제: prepare(서버가 1회용 토큰·삭제 범위 발급) → confirm(토큰 + slug 재입력).
+export function postCalculatorDeletePrepare(slug) {
+  return sendJson(`/api/calculators/${encodeURIComponent(slug)}/delete/prepare`, 'POST')
+}
+
+export function postCalculatorDeleteConfirm(slug, token, confirmSlug) {
+  return sendJson(`/api/calculators/${encodeURIComponent(slug)}/delete/confirm`, 'POST', { token, confirm_slug: confirmSlug })
+}
+
+// GAP-03 전체 정적 사이트 재빌드(_site 전체). Build만 하며 push/deploy는 하지 않는다.
+export function postSiteRebuild(slug) {
+  return sendJson('/api/sites/rebuild', 'POST', { slug })
 }
