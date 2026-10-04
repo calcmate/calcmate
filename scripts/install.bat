@@ -30,8 +30,5 @@ if exist requirements.txt (
     echo requirements.txt not found!
 )
 
-:: 4. Run Dashboard
-echo Launching Dashboard...
-.venv\Scripts\streamlit.exe run dashboard.py
 
 pause

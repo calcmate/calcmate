@@ -95,10 +95,10 @@ blog_auto_v12/
 
 ## STEP 5 — 대시보드 실행 및 Setup Wizard
 
-`scripts\run_dashboard.bat` 더블클릭.
+루트의 `start_dashboard.bat` 더블클릭 (FastAPI `127.0.0.1:8000` + React/Vite `127.0.0.1:5173`).
 
-브라우저에서 자동으로 `http://localhost:8501` 열림.  
-`config.yaml`이 없으면 **Setup Wizard가 자동 시작**됩니다.
+브라우저에서 자동으로 `http://127.0.0.1:5173` 열림.
+> 참고: 아래 Setup Wizard(`config.yaml` 미존재 시 자동 시작)는 legacy Streamlit `dashboard.py` 동작이며 React/FastAPI에는 이관되지 않았습니다. (Streamlit 실행 스크립트는 제거됨)
 
 ---
 

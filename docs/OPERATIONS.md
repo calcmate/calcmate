@@ -1,6 +1,6 @@
 # OPERATIONS — 운영 절차
 
-> 계산기 신규 추가부터 발행·관찰·수정까지의 운영 흐름. 대시보드(`run_dashboard.bat`)로 운영한다.
+> 계산기 신규 추가부터 발행·관찰·수정까지의 운영 흐름. 대시보드(React+FastAPI, 루트 `start_dashboard.bat`)로 운영한다.
 > Calculator는 자동 Scheduler 없이 **수동 생성**(App Factory/계산기 관리)이 기준이며,
 > 예약 자동 발행이 필요한 라인은 Blog(Golden 10 → Blog Schedule → WordPress)뿐이다.
 

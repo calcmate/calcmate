@@ -25,7 +25,7 @@
 ├─ repositories/  article·site·calculator·template _repository
 ├─ adapters/  db/{sheets,sqlite,postgres*} · storage/{drive,local,s3*}
 ├─ scripts/  install·run_pipeline·run_scheduler·run_dryrun·run_strategy_room·
-│            run_dashboard·sync_cache(.bat)·repair_google_setup.py
+│            sync_cache(.bat)·repair_google_setup.py
 ├─ data/  logs(pipeline.log,budget.json,health_last.json) · outputs · schedule · cache ·
 │         assistant(memory.json/tasks.json/backups) · dlq
 ├─ docs/  CALCULATOR_REVIEWER_FIX_RESULT.md
@@ -108,6 +108,6 @@
 | `storage/s3_adapter.py` | ❌ stub |
 
 ## scripts/ (.bat = cp949/CRLF, venv 직접호출)
-install · run_pipeline(--once) · run_scheduler(--scheduler) · run_dryrun(--dry-run) · run_strategy_room(--strategy-room) · run_dashboard(dashboard.py) · sync_cache(미러 워밍) · repair_google_setup.py
+install · run_pipeline(--once) · run_scheduler(--scheduler) · run_dryrun(--dry-run) · run_strategy_room(--strategy-room) · sync_cache(미러 워밍) · repair_google_setup.py
 
-> 참고: Legacy `run_schedule.bat`/`run_dashboard_new.bat`/`dashboard_ui_refactor.py`는 v12 Lite에서 **삭제됨**(존재하지 않음).
+> 참고: Legacy `run_schedule.bat`/`run_dashboard_new.bat`/`dashboard_ui_refactor.py`는 v12 Lite에서 **삭제됨**(존재하지 않음). Streamlit launcher `run_dashboard.bat`/`start_dashboard_autostart.bat`도 삭제됨(CALCMATE-STREAMLIT-LAUNCHER-CLEANUP-01) — 대시보드 실행은 루트 `start_dashboard.bat`(React+FastAPI).

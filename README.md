@@ -116,7 +116,7 @@ repositories/ · adapters/(db,storage) · scripts/ · templates/ · prompts/ · 
 > ⚠️ secrets.yaml은 절대 커밋하지 말 것. 외부 노출 시 키 재발급 필수.
 
 ## 9. Dashboard 실행
-`scripts/run_dashboard.bat` (= `streamlit run dashboard.py`). 다크 SaaS, 8그룹 네비. 운영센터 + AI Assistant.
+`start_dashboard.bat` (루트) — FastAPI(`127.0.0.1:8000`) + React/Vite(`127.0.0.1:5173`) 기동 후 브라우저 오픈. (legacy Streamlit `dashboard.py` 실행 스크립트는 제거됨)
 
 ## 10. Scheduler 실행
 `scripts/run_scheduler.bat` (= `main.py --scheduler`). **유일한 상시 운영 방식.** 평일/주말 슬롯 + 랜덤 예약시각으로 시각별 1건 발행(today_schedule.json 영속, 실패모드 3종).
@@ -136,7 +136,7 @@ repositories/ · adapters/(db,storage) · scripts/ · templates/ · prompts/ · 
 ```
 1) secrets.yaml 설정 + Google 공유 + (선택)WordPress
 2) run_dryrun.bat 로 헬스체크(6서비스 OK 확인)
-3) run_dashboard.bat 로 사이트/계산기 등록·설정
+3) start_dashboard.bat(React+FastAPI) 로 사이트/계산기 등록·설정
 4) run_scheduler.bat 상시 실행(예약 발행)
 5) 대시보드에서 비용/Retry/로그/헬스 모니터링
 ```
