@@ -118,6 +118,59 @@ EXPECTED_WRITE_ROUTES = frozenset({
     # 정당하게 추가되어 이제 46개다(§WRITE-SURFACE-FIX-01).
     ("/api/scheduler/publishing-policy", "PATCH"),
     ("/api/scheduler/auto-publishing", "PATCH"),
+    # CALCMATE-MIGRATION-C-TEST-CONTRACT-FIX-02: Streamlit→FastAPI 이관(A 커밋 9b9f979)으로
+    # 추가된 write route 46개 — 전부 require_admin() 뒤에 있음을 확인한 뒤 등록(이제 92개).
+    # AI Assistant / AI Workspace
+    ("/api/assistant/chat", "POST"),
+    ("/api/assistant/files/create", "POST"),
+    ("/api/assistant/files/list", "POST"),
+    ("/api/assistant/files/preview", "POST"),
+    ("/api/assistant/files/read", "POST"),
+    ("/api/assistant/files/write", "POST"),
+    ("/api/assistant/memory", "POST"),
+    ("/api/assistant/tasks", "POST"),
+    ("/api/assistant/tasks/{task_id}", "PATCH"),
+    ("/api/workspace/chat", "POST"),
+    ("/api/workspace/files/create", "POST"),
+    ("/api/workspace/files/preview", "POST"),
+    ("/api/workspace/files/sandbox", "POST"),
+    ("/api/workspace/files/write", "POST"),
+    # App Factory AI 추천 / Contract / Mode A preview / GAP-01·02
+    ("/api/calculators/ai/suggest-formula", "POST"),
+    ("/api/calculators/ai/suggest-idea", "POST"),
+    ("/api/calculators/ai/suggest-mode", "POST"),
+    ("/api/calculators/ai/suggest-spec", "POST"),
+    ("/api/calculators/ai/suggest-tier", "POST"),
+    ("/api/calculators/ai/tier2b-keywords", "POST"),
+    ("/api/calculators/generate/contract/slug-suggest", "POST"),
+    ("/api/calculators/generate/contract/{job_id}/confirm-formula", "POST"),
+    ("/api/calculators/generate/preview", "POST"),
+    ("/api/calculators/generate/preview/{job_id}/discard", "POST"),
+    ("/api/calculators/generate/preview/{job_id}/save", "POST"),
+    ("/api/calculators/{slug}/delete/confirm", "POST"),
+    ("/api/calculators/{slug}/delete/prepare", "POST"),
+    ("/api/calculators/{slug}/status", "POST"),
+    # Scheduler (oneoff / webapp / content-sync 복구 / run-one / planner / topic reconciliation)
+    ("/api/scheduler/blog/oneoff", "POST"),
+    ("/api/scheduler/blog/run-once/oneoff", "POST"),
+    ("/api/scheduler/calculator-webapp/run-once", "POST"),
+    ("/api/scheduler/calculator/config", "PATCH"),
+    ("/api/scheduler/content-sync/resume", "POST"),
+    ("/api/scheduler/content-sync/retry", "POST"),
+    ("/api/scheduler/pipeline/run-one", "POST"),
+    ("/api/scheduler/planner/run-once", "POST"),
+    ("/api/scheduler/topics/{topic_id}/revert-candidate", "POST"),
+    ("/api/scheduler/topics/{topic_id}/wp-check", "POST"),
+    # Settings (계산기 노출 / 운영 설정 / 연결 테스트)
+    ("/api/settings/calculator-display", "PATCH"),
+    ("/api/settings/operations", "PATCH"),
+    ("/api/settings/telegram/test", "POST"),
+    ("/api/settings/wordpress/test", "POST"),
+    # Sites (사이트 공통 페이지 / GAP-03 전체 재빌드)
+    ("/api/sites/pages/deploy", "POST"),
+    ("/api/sites/pages/preview", "POST"),
+    ("/api/sites/pages/save", "POST"),
+    ("/api/sites/rebuild", "POST"),
 })
 
 # 참고용 read endpoint(§4의 명시 금지 목록에 대응하는 실제 존재 경로들).
@@ -185,7 +238,7 @@ def test_actual_write_surface_matches_expected_exactly():
 
 
 def test_exactly_ten_write_routes_exist():
-    assert len(write_routes(_app())) == 46
+    assert len(write_routes(_app())) == 92
 
 
 # ── §4: PUT/DELETE는 전체 API에 단 하나도 없어야 한다 ───────────────────────
@@ -221,8 +274,12 @@ def test_settings_has_only_the_general_write_route():
     require_admin() 뒤에서 정당하게 추가되어 이제 2개다 — 그 외에는 여전히
     쓰기 route가 없어야 한다."""
     assert write_routes(_app(), prefix="/api/settings") == [
+        ("/api/settings/calculator-display", "PATCH"),  # C-TEST-CONTRACT-FIX-02: 이관 추가분
         ("/api/settings/general", "PATCH"),
         ("/api/settings/image-google", "PATCH"),
+        ("/api/settings/operations", "PATCH"),  # 이관 추가분
+        ("/api/settings/telegram/test", "POST"),  # 이관 추가분
+        ("/api/settings/wordpress/test", "POST"),  # 이관 추가분
     ]
 
 
@@ -242,11 +299,24 @@ def test_calculator_has_only_the_formula_promote_checklist_and_generate_write_ro
     각각 require_admin() 뒤에서 정당하게 추가되어 이제 17개다 — 그 외에는 여전히
     쓰기 route가 없어야 한다."""
     assert sorted(write_routes(_app(), prefix="/api/calculators")) == [
+        # APP-FACTORY-02: App Factory AI 추천 6종(require_admin)
+        ("/api/calculators/ai/suggest-formula", "POST"),
+        ("/api/calculators/ai/suggest-idea", "POST"),
+        ("/api/calculators/ai/suggest-mode", "POST"),
+        ("/api/calculators/ai/suggest-spec", "POST"),
+        ("/api/calculators/ai/suggest-tier", "POST"),
+        ("/api/calculators/ai/tier2b-keywords", "POST"),
         ("/api/calculators/generate", "POST"),
         ("/api/calculators/generate/contract", "POST"),
         ("/api/calculators/generate/contract/slug-check", "POST"),
+        ("/api/calculators/generate/contract/slug-suggest", "POST"),  # APP-FACTORY-02
         ("/api/calculators/generate/contract/validate", "POST"),
+        ("/api/calculators/generate/contract/{job_id}/confirm-formula", "POST"),  # APP-FACTORY-02
         ("/api/calculators/generate/contract/{job_id}/save", "POST"),
+        # SMALL-GAPS-02: Mode A 생성 → 검토 → 저장/폐기(require_admin)
+        ("/api/calculators/generate/preview", "POST"),
+        ("/api/calculators/generate/preview/{job_id}/discard", "POST"),
+        ("/api/calculators/generate/preview/{job_id}/save", "POST"),
         ("/api/calculators/{slug}/build", "POST"),
         ("/api/calculators/{slug}/checklist", "PATCH"),
         ("/api/calculators/{slug}/content/body", "POST"),
@@ -254,11 +324,14 @@ def test_calculator_has_only_the_formula_promote_checklist_and_generate_write_ro
         ("/api/calculators/{slug}/content/generate", "POST"),
         ("/api/calculators/{slug}/content/image", "POST"),
         ("/api/calculators/{slug}/content/seo", "POST"),
+        ("/api/calculators/{slug}/delete/confirm", "POST"),  # GAP-02
+        ("/api/calculators/{slug}/delete/prepare", "POST"),  # GAP-02
         ("/api/calculators/{slug}/deploy", "POST"),
         ("/api/calculators/{slug}/formula", "PATCH"),
         ("/api/calculators/{slug}/promote", "POST"),
         ("/api/calculators/{slug}/review/approve", "POST"),
         ("/api/calculators/{slug}/review/unapprove", "POST"),
+        ("/api/calculators/{slug}/status", "POST"),  # GAP-01
     ]
 
 
