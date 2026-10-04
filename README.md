@@ -130,7 +130,7 @@ repositories/ · adapters/(db,storage) · scripts/ · templates/ · prompts/ · 
 `WORDPRESS_URL`/`WORDPRESS_USERNAME`(config) + `WORDPRESS_APP_PASSWORD`(secrets, Application Password). 미설정/placeholder(example.com)면 `is_wordpress_ready=False` → 발행 단계 **graceful skip**(크래시 없음). 사이트별 발행은 `secrets.yaml`의 `wordpress_profiles`.
 
 ## 12. Telegram 설정
-`TELEGRAM_BOT_TOKEN`(secrets) + `TELEGRAM_CHAT_ID`(config). Settings 탭에서 입력·**테스트 전송** 가능. **이벤트 ON/OFF 토글**(`TELEGRAM_EVENTS`: error/budget/daily_summary/publish_request) — telegram_ops 경유 이벤트에 적용. 키 미설정 시 무동작. (양방향은 `TELEGRAM_BIDIRECTIONAL_DESIGN.md` 설계만)
+`TELEGRAM_BOT_TOKEN`(secrets) + `TELEGRAM_CHAT_ID`(secrets). Settings 탭에서 입력·**테스트 전송** 가능. **이벤트 ON/OFF 토글**(`TELEGRAM_EVENTS`: error/budget/daily_summary/publish_request) — telegram_ops 경유 이벤트에 적용. 키 미설정 시 무동작. (양방향은 `TELEGRAM_BIDIRECTIONAL_DESIGN.md` 설계만)
 
 ## 13. 운영 순서
 ```
