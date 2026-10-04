@@ -64,7 +64,7 @@
 | 파일 | 역할 | 상태 |
 |------|------|------|
 | `formula_engine.py` | AST 안전 수식 | ✅ |
-| `calculator_form_engine.py` / `calculator_template_engine.py` | 입력폼 스키마 / 위젯 HTML | ✅ |
+| `calculator_template_engine.py` | 위젯 HTML | ✅ |
 | `app_generator.py` / `app_factory.py` | index/style/script 생성 / 자동 계산기 생성 | ✅ |
 | `calculator_reviewer.py` | **GPT 검수(CALC_REVIEW_*) + total 항목평균 정규화 + auto_review_and_fix** | ✅ |
 | `calculator_{seo,faq,content,image_prompt}_generator.py` | SEO/FAQ/본문/이미지프롬프트 | ✅ |

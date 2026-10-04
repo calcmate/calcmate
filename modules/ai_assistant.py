@@ -218,7 +218,6 @@ def _context_for(target: str) -> str:
     # 특정 파일/모듈 언급 시 내용 일부 첨부
     for kw, rel in [("app factory", "modules/app_factory.py"), ("app_factory", "modules/app_factory.py"),
                     ("config", "config/config.yaml"), ("reviewer", "modules/calculator_reviewer.py"),
-                    ("form engine", "modules/calculator_form_engine.py"),
                     ("template", "templates/calculators/calculator_v1.html")]:
         if kw in target.lower():
             try:

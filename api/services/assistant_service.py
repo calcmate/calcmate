@@ -44,7 +44,6 @@ PUBLIC_CONFIG_KEYS = ("SITE_URL", "SITE_NAME", "RUN_MODE", "ADSENSE_MODE", "DAIL
 # _context_for()의 키워드 → 참고 파일(config.yaml 제외, 코드/템플릿만)
 _CONTEXT_FILES = [("app factory", "modules/app_factory.py"), ("app_factory", "modules/app_factory.py"),
                   ("reviewer", "modules/calculator_reviewer.py"),
-                  ("form engine", "modules/calculator_form_engine.py"),
                   ("template", "templates/calculators/calculator_v1.html")]
 
 

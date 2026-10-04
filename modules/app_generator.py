@@ -4,7 +4,7 @@ modules/app_generator.py — 계산기 정적 앱(HTML/CSS/JS) 생성기 (Salary
 
 calculators 메타데이터로 index.html / style.css / script.js 생성(GitHub Pages 배포용).
 - UI: templates/calculators/calculator_v1.html (모든 계산기 동일 UI, 변수 치환)
-- 입력폼: calculator_form_engine (input_schema 없으면 자동 생성)
+- 입력폼: input_schema 기반 자동 생성 (calculator_v2.html의 _form_fields_v2)
 - 노출 정책: site_mode_manager (광고/관련계산기/공유/리포트)
 - 수식: formula_engine 정의를 클라이언트 JS로 변환
 
@@ -1330,21 +1330,6 @@ def _formula_map(formula, output_schema) -> dict:
     return {(keys[0] if keys else "result"): formula}
 
 
-def _effective_form(calc: dict, cfg: dict = None):
-    """(form_schema, [field_names]) 반환. input_schema 우선, 없으면 Form Engine."""
-    ins = _pj(calc.get("input_schema"), {})
-    if ins:
-        fields = [{"type": ("date" if "date" in str(ins[k]).lower() else "number"),
-                   "label": _label(k), "name": k} for k in ins]
-        return {"fields": fields}, list(ins.keys())
-    try:
-        from .calculator_form_engine import generate_form_schema
-        sch = generate_form_schema(cfg or {}, calc.get("name", ""))
-    except Exception:
-        sch = {"fields": [{"type": "number", "label": "값1", "name": "value1"}]}
-    return sch, [f.get("name") for f in sch.get("fields", [])]
-
-
 # ── JS (design v2: 공통 컴포넌트 모듈 + 계산기별 computeResult) ────
 def generate_js(calc: dict, cfg: dict = None) -> str:
     """script.js = 공통 컴포넌트 모듈 + 계산기별 computeResult() + Phase D 동적 설정."""
@@ -1368,15 +1353,6 @@ def generate_css(calc: dict = None) -> str:
 
 
 # ── 섹션 빌더 ─────────────────────────────────────────────────────
-def _form_html(calc, cfg):
-    sch, _ = _effective_form(calc, cfg)
-    try:
-        from .calculator_form_engine import build_form_html
-        return build_form_html(sch, "in")
-    except Exception:
-        return "<p>입력 항목이 없습니다.</p>"
-
-
 def _result_html(calc):
     outs = _pj(calc.get("output_schema"), {})
     rows = "".join(f'<div class="r"><span>{_html.escape(_label(k))}</span>'
