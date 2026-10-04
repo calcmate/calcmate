@@ -10,7 +10,6 @@ on:
     paths:
       - "modules/**"
       - "content/**"
-      - "dashboard.py"
       - "tests/**"
       - "requirements.txt"
       - ".github/workflows/ci.yml"

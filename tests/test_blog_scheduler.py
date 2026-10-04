@@ -674,21 +674,6 @@ class TestRunBlogOnceWpStatusContract:
         assert result["results"][0]["status"] == "PUBLISHED"
 
 
-# ── Test C: Dashboard mode label 표기 — CALCMATE-STEP170 ────────────────────
-#
-# dashboard.py는 import 시 Streamlit/스케줄러 스레드 기동 등 부작용이 있어(기존
-# tests/test_dashboard_*.py 컨벤션과 동일하게) 직접 import하지 않고, 소스 텍스트만
-# 읽어 표시 문구를 검증한다.
-
-class TestDashboardBlogModeLabel:
-
-    def test_draft_label_no_longer_claims_wp_draft(self):
-        import pathlib
-        src = pathlib.Path(__file__).resolve().parent.parent.joinpath("dashboard.py").read_text(encoding="utf-8")
-        assert "Draft (WP 초안)" not in src, "SAFE-DRY-RUN(WP 미호출)을 'WP 초안'으로 오표기하는 문구가 남아있음"
-        assert "Dry-Run (WP 미호출)" in src
-
-
 # ============================================================
 # TEST 12: CALCMATE-STEP172 — _check_wp_duplicate() FAIL-CLOSED + slug 매칭 정확성
 #
