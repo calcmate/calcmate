@@ -19,7 +19,7 @@ CALCMATE-CONTENT-SYNC-BLOG-ARTICLES-MIGRATION-IMPLEMENT-01:
     파일(data/schedule/content_sync_state.json, sync_history.jsonl)에만 남긴다.
 
 Publish Scheduler(scheduler.py)와 완전히 분리되어 있다:
-  - 별도 진입점(run_sync.py)에서 기동
+  - 별도 진입점(FastAPI Content Sync worker / 수동 run-once API)에서 기동
   - 별도 lock 파일(data/schedule/content_sync.lock)
   - 별도 이력 파일(data/schedule/sync_history.jsonl)
 scheduler.py 의 run_scheduler_loop 패턴(poll 루프 + 파일 lock)만 재사용하고,
@@ -608,7 +608,7 @@ def catch_up_if_needed(cfg: dict, adapter: OutputAdapter | None = None) -> dict 
 
 
 def _content_sync_config_path(cfg: dict) -> Path:
-    """cfg가 로드된 config.yaml 경로를 재구성한다(run_sync.py --instance 지원과 동일 규칙).
+    """cfg가 로드된 config.yaml 경로를 재구성한다(_root/_instance_id 기준).
     cfg에 _root/_instance_id가 없으면(dashboard.py 등 기본 실행) 기본 경로를 쓴다."""
     root = Path(cfg.get("_root") or Path(__file__).resolve().parent.parent)
     instance_id = cfg.get("_instance_id")

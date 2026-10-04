@@ -15,7 +15,7 @@
 | Task Scheduler `\블로그1회예약` | **Disabled** | 실행 안 됨 |
 | Streamlit Content Sync owner | **REMOVED** | `dashboard.py` 삭제됨 |
 | Root launcher (`run_sync.py/bat`) | **REMOVED** | 삭제됨 |
-| `scripts/run_sync.bat` | **PRESENT(미등록)** | 삭제된 `run_sync.py`를 호출하므로 현재 동작하지 않음 |
+| `scripts/run_sync.bat` | **REMOVED** | 삭제됨(삭제된 `run_sync.py`를 호출하던 one-shot launcher) |
 
 ---
 

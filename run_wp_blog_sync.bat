@@ -3,11 +3,10 @@ REM ============================================================
 REM  run_wp_blog_sync.bat — WP Publish -> blog_articles 자동 등록 런처(STEP186)
 REM  (대시보드 실행 여부와 무관하게 독립 프로세스로 구동)
 REM
-REM  기존 run_scheduler.bat(발행 슬롯)/run_sync.bat(WP<->Sheets)은 수정하지
-REM  않는다 — 이 배치파일은 완전히 별도의 진입점이며, lock 파일도
+REM  이 배치파일은 완전히 별도의 진입점이며, lock 파일도
 REM  data/schedule/wp_blog_sync.lock 로 분리되어 있어 서로 겹치지 않는다.
 REM
-REM  ※ run_sync.bat과 동일한 이유로, Windows Task Scheduler에 등록할 때는
+REM  ※ Windows Task Scheduler에 등록할 때는
 REM    "시간(HH:MM)" 트리거가 아니라 "로그온 시 상시 실행" 트리거로 걸어야
 REM    한다 — 실제 폴링 주기는 modules/wp_blog_sync.py의 run_wp_blog_sync_loop
 REM    내부(poll_seconds)에서 처리한다. 이 STEP에서는 Task Scheduler 등록
