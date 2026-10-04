@@ -11,16 +11,12 @@ tests/test_dashboard_sync_recovery_tab.py)과 달리, 이 파일은:
   - failed_permanent/legacy 항목이 "완전히 불변"임을 dict 전체 비교로 확인
   - DELETE의 delete_targets가 실제로 SQLite/Sheets 중 지정된 쪽만 건드리는지
   - SQLiteFirstAdapter 재시도가 raw SheetsAdapter를 우회하지 않는지
-  - Dashboard의 결과-분기 코드(dashboard.py 실제 소스, 수정 없이 그대로)가
-    mocked retry_pending_sync()의 반환값에 따라 의도한 st.* 위젯을 호출하는지
 를 명시적으로 커버한다.
 
-이 파일은 dashboard.py를 import하거나 실행하지 않는다. 대신 "🔁 동기화 복구"
-탭의 실제 소스 텍스트를 파일에서 그대로 읽어(수정 없이) exec()로 격리
-실행한다 — st 모듈과 adapters.db.dual_adapter의 3개 함수만 mock으로 주입한다.
-이렇게 하면 dashboard.py 코드를 1바이트도 바꾸지 않고 실제 분기 로직을
-검증할 수 있다(STEP61에서 확인된 대로, dashboard.py 전체를 실행하면 실제
-config.yaml 기반 스케줄러 스레드가 기동될 위험이 있어 회피한다).
+Streamlit "🔁 동기화 복구" 탭의 결과-분기 UI 테스트는 Streamlit 제거
+(CALCMATE-LEGACY-DASHBOARD-TESTS-CLEANUP)와 함께 제거되었다. 수동 재시도/재개는
+FastAPI(/api/scheduler/content-sync/retry, /resume — tests/test_content_sync_manual.py)가
+담당한다.
 
 최우선 보호 조건: 이 파일의 모든 테스트는 tmp_path/monkeypatch로
 _SYNC_QUEUE_PATH를 격리한다. 실제 data/sync/pending_sync.json은 이 파일
@@ -29,7 +25,6 @@ _SYNC_QUEUE_PATH를 격리한다. 실제 data/sync/pending_sync.json은 이 파�
 import hashlib
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -52,7 +47,6 @@ from adapters.db.sqlite_first_adapter import SQLiteFirstAdapter
 
 _REAL_QUEUE_PATH = Path(__file__).resolve().parent.parent / "data" / "sync" / "pending_sync.json"
 _REAL_QUEUE_HASH_BEFORE = hashlib.sha256(_REAL_QUEUE_PATH.read_bytes()).hexdigest()
-_DASHBOARD_SRC = (Path(__file__).resolve().parent.parent / "dashboard.py").read_text(encoding="utf-8")
 
 
 @pytest.fixture(autouse=True)
@@ -281,161 +275,6 @@ def test_12_sqlite_first_adapter_retry_uses_backup_method_not_raw_sheets_adapter
     assert result["result"] == "success"
     assert calls["backup_insert"] == 1
     assert calls["raw_sheets_insert"] == 0, "retry 엔진이 SheetsAdapter를 직접 호출하면 안 됨(split 로직 우회 위험)"
-
-
-# ── 8/9. Dashboard UI 결과 분기 검증(dashboard.py 소스를 수정 없이 격리 실행) ──
-
-def _tab_source() -> str:
-    marker = 'elif tab == "🔁 동기화 복구":'
-    idx = _DASHBOARD_SRC.index(marker)
-    return _DASHBOARD_SRC[idx:].replace('elif tab ==', 'if tab ==', 1)
-
-
-def _run_tab_with_mocks(pending_items, processing_items, failed_items,
-                         retry_return, clicked_key, resume_return=None,
-                         checkbox_checked=True, resume_clicked_key=None):
-    """dashboard.py의 "🔁 동기화 복구" 탭 소스를 1바이트도 바꾸지 않고 그대로
-    읽어 exec()로 격리 실행한다. st와 adapters.db.dual_adapter의 4개 함수만
-    mock으로 주입 — dashboard.py 파일 자체는 이 테스트에서 전혀 수정하지 않는다.
-
-    st.button은 실제 Streamlit처럼 disabled=True면 클릭 여부와 무관하게
-    항상 False를 반환하도록 흉내낸다(재개 확인 버튼의 checkbox-gate 검증용)."""
-    mock_st = MagicMock()
-    mock_st.expander.return_value.__exit__.return_value = False  # 예외 삼키지 않음
-    mock_st.checkbox.return_value = checkbox_checked
-
-    def _button(*args, **kwargs):
-        if kwargs.get("disabled"):
-            return False
-        key = kwargs.get("key")
-        return key == clicked_key or key == resume_clicked_key
-    mock_st.button.side_effect = _button
-
-    import adapters.db.dual_adapter as dam
-    orig = (dam.list_pending_sync, dam.list_all_sync, dam.retry_pending_sync, dam.resume_failed_sync)
-    dam.list_pending_sync = lambda: pending_items
-    dam.list_all_sync = lambda status=None: {
-        "processing": processing_items, "failed_permanent": failed_items,
-    }.get(status, pending_items + processing_items + failed_items)
-    dam.retry_pending_sync = lambda qid, cfg: retry_return
-    dam.resume_failed_sync = lambda qid: resume_return
-    try:
-        namespace = {"st": mock_st, "cfg": {}, "tab": "🔁 동기화 복구"}
-        exec(compile(_tab_source(), "<dashboard_sync_recovery_tab>", "exec"), namespace)
-    finally:
-        (dam.list_pending_sync, dam.list_all_sync,
-         dam.retry_pending_sync, dam.resume_failed_sync) = orig
-    return mock_st
-
-
-_FAKE_ITEM = {
-    "id": "qid1", "op": "update", "table": "calculators", "row_id": "r1",
-    "direction": "sheets_to_sqlite", "source_adapter": "DualAdapter",
-    "retry_count": 0, "status": "pending", "error": "e",
-    "created_at": "t0", "last_attempt_at": None, "delete_targets": None,
-}
-
-
-@pytest.mark.parametrize("result_value,expect_widget", [
-    ({"result": "success", "detail": "ok-success"}, "success"),
-    ({"result": "failed", "detail": "ok-failed"}, "error"),
-    ({"result": "not_found", "detail": "ok-not-found"}, "warning"),
-    ({"result": "duplicate", "detail": "ok-duplicate"}, "warning"),
-    ({"result": "unsupported", "detail": "ok-unsupported"}, "warning"),
-])
-def test_09_ui_branch_calls_expected_widget_per_result(result_value, expect_widget):
-    mock_st = _run_tab_with_mocks(
-        pending_items=[dict(_FAKE_ITEM)], processing_items=[], failed_items=[],
-        retry_return=result_value, clicked_key="retry_qid1")
-
-    widget = getattr(mock_st, expect_widget)
-    widget.assert_called_once_with(result_value["detail"])
-    mock_st.rerun.assert_called_once()
-    for other in ("success", "error", "warning"):
-        if other != expect_widget:
-            getattr(mock_st, other).assert_not_called()
-
-
-def test_08_processing_item_renders_without_retry_button_call(monkeypatch):
-    """processing 항목만 있을 때는 st.button이 '🔁 Retry'로 호출되지 않아야 한다
-    (버튼 자체가 렌더링되지 않음 — key가 어떤 retry_* 로도 클릭되지 않게 강제)."""
-    proc_item = dict(_FAKE_ITEM, id="qidproc", status="processing")
-    mock_st = _run_tab_with_mocks(
-        pending_items=[], processing_items=[proc_item], failed_items=[],
-        retry_return={"result": "success", "detail": "unused"},
-        clicked_key="retry_qidproc")  # 눌렸다고 가정해도 버튼 자체가 없어야 함
-    button_keys = [kw.get("key") for _, kw in mock_st.button.call_args_list]
-    assert "retry_qidproc" not in button_keys
-    mock_st.success.assert_not_called()
-    mock_st.error.assert_not_called()
-
-
-def test_08b_failed_permanent_item_renders_without_retry_button_call():
-    fp_item = dict(_FAKE_ITEM, id="qidfp", status="failed_permanent", retry_count=3)
-    mock_st = _run_tab_with_mocks(
-        pending_items=[], processing_items=[], failed_items=[fp_item],
-        retry_return={"result": "success", "detail": "unused"},
-        clicked_key="retry_qidfp")
-    button_keys = [kw.get("key") for _, kw in mock_st.button.call_args_list]
-    assert "retry_qidfp" not in button_keys
-
-
-def test_08c_legacy_item_renders_without_retry_button_call():
-    legacy_item = dict(_FAKE_ITEM, id="qidlegacy", direction=None, source_adapter=None)
-    mock_st = _run_tab_with_mocks(
-        pending_items=[legacy_item], processing_items=[], failed_items=[],
-        retry_return={"result": "success", "detail": "unused"},
-        clicked_key="retry_qidlegacy")
-    button_keys = [kw.get("key") for _, kw in mock_st.button.call_args_list]
-    assert "retry_qidlegacy" not in button_keys
-
-
-# ── 10. Dashboard 재개(resume) UX 검증(STEP65) ──────────────────────
-
-_FP_ITEM = dict(_FAKE_ITEM, id="fpqid1", status="failed_permanent", retry_count=3)
-
-
-def test_10a_resume_confirm_button_disabled_when_checkbox_unchecked():
-    """checkbox 미체크 시 '재개 확인' 버튼은 disabled=True로 렌더링되어,
-    클릭을 시도해도(key 일치) 실제로는 눌리지 않는다(resume_failed_sync 미호출)."""
-    mock_st = _run_tab_with_mocks(
-        pending_items=[], processing_items=[], failed_items=[dict(_FP_ITEM)],
-        retry_return={"result": "success", "detail": "unused"},
-        clicked_key=None, resume_return={"result": "success", "detail": "should-not-fire"},
-        checkbox_checked=False, resume_clicked_key="confirm_resume_fpqid1")
-
-    # button()이 disabled=True로 호출됐는지 확인(실제 UI가 비활성 상태로 렌더링됨)
-    disabled_calls = [kw for _, kw in mock_st.button.call_args_list
-                       if kw.get("key") == "confirm_resume_fpqid1"]
-    assert disabled_calls and disabled_calls[0].get("disabled") is True
-    mock_st.success.assert_not_called()
-    mock_st.warning.assert_not_called()
-
-
-def test_10b_resume_confirm_button_enabled_when_checkbox_checked_and_success():
-    mock_st = _run_tab_with_mocks(
-        pending_items=[], processing_items=[], failed_items=[dict(_FP_ITEM)],
-        retry_return={"result": "success", "detail": "unused"},
-        clicked_key=None, resume_return={"result": "success", "detail": "resumed-ok"},
-        checkbox_checked=True, resume_clicked_key="confirm_resume_fpqid1")
-
-    disabled_calls = [kw for _, kw in mock_st.button.call_args_list
-                       if kw.get("key") == "confirm_resume_fpqid1"]
-    assert disabled_calls and disabled_calls[0].get("disabled") is False
-    mock_st.success.assert_called_once_with("resumed-ok")
-    mock_st.rerun.assert_called_once()
-
-
-def test_10c_resume_unsupported_result_uses_st_warning():
-    mock_st = _run_tab_with_mocks(
-        pending_items=[], processing_items=[], failed_items=[dict(_FP_ITEM)],
-        retry_return={"result": "success", "detail": "unused"},
-        clicked_key=None, resume_return={"result": "unsupported", "detail": "cannot-resume"},
-        checkbox_checked=True, resume_clicked_key="confirm_resume_fpqid1")
-
-    mock_st.warning.assert_called_once_with("cannot-resume")
-    mock_st.rerun.assert_called_once()
-    mock_st.success.assert_not_called()
 
 
 # ── Isolation(최우선 보호 조건) ────────────────────────────────────

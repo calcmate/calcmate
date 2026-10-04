@@ -4,9 +4,10 @@
 STEP 25-2 변경:
 - modules/review_center.py: suggest_mode() 신규 함수 + LEGAL_SIGNAL_KEYWORDS /
   detect_legal_signal_keywords() 추가 (suggest_tier() 패턴 재사용).
-- dashboard.py: "Mode AI 추천" UI 블록 추가 (af_name/af_cat/af_desc 입력 직후,
-  Tier2-B 키워드 감지 이전). 추천 표시 전용 — 자동 생성/legal_refs/test_cases에는
-  일체 관여하지 않는다.
+- Mode AI 추천 UI는 추천 표시 전용 — 자동 생성/legal_refs/test_cases에는 일체
+  관여하지 않는다. Streamlit 제거(CALCMATE-LEGACY-DASHBOARD-TESTS-CLEANUP) 이후 UI는
+  React(AppFactoryAiAssist.jsx), API는 /api/calculators/ai/suggest-mode가 담당하며
+  이 파일은 suggest_mode() 등 모듈 함수만 검증한다.
 
 핵심 안전 원칙(STEP 25-1 진단 기반):
   Mode B → A 오판이 A → B 오판보다 구조적으로 더 위험하다(Mode A에는 legal_refs
@@ -26,25 +27,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.stdout.reconfigure(encoding="utf-8")
 
 import modules.review_center as rc_mod
-
-_DASHBOARD_SRC = Path(__file__).resolve().parent.parent.joinpath("dashboard.py").read_text(encoding="utf-8")
-
-
-def _mode_block():
-    """dashboard.py에서 STEP 25-2 Mode 추천 UI 블록만 잘라낸다."""
-    start = _DASHBOARD_SRC.find("# ── Mode(A/B) AI 추천 (STEP 25-2) ")
-    end = _DASHBOARD_SRC.find("# ── Tier2-B 키워드 사전 감지 (rule-based) ", start)
-    assert start != -1 and end != -1 and start < end, "Mode 추천 UI 블록을 찾지 못함"
-    return _DASHBOARD_SRC[start:end]
-
-
-def _mode_block_code_only() -> str:
-    """Mode 추천 UI 블록에서 주석 라인(#...)만 제거한 코드 본문.
-    (설명용 주석/캡션 텍스트에는 "이걸 자동으로 하지 않는다"를 알리기 위해
-    legal_refs/test_cases/generate_app 등의 단어가 정당하게 등장할 수 있으므로,
-    실제 호출/대입 패턴만 검사 대상으로 남긴다.)"""
-    lines = [ln for ln in _mode_block().splitlines() if not ln.strip().startswith("#")]
-    return "\n".join(lines)
 
 
 def _func_source_without_docstring(func) -> str:
@@ -96,11 +78,6 @@ class TestDateBasedModeBAndTier2BIndependence:
                        '{"mode": "B", "reason": "병역법 기반 전역일 계산", "confidence": "high"}')):
             result = rc_mod.suggest_mode({}, "전역일 계산기", "병역/공무", "입영일 기준 전역일 계산")
         assert result["mode"] == "B"
-
-    def test_3b_mode_block_does_not_touch_tier2b_state(self):
-        block = _mode_block()
-        assert "af_tier2b_suggested" not in block
-        assert "af_contract_is_tier2b" not in block
 
 
 # ── 4. 경계 사례 ─────────────────────────────────────────────────────────────
@@ -161,41 +138,10 @@ class TestChatExceptionFallback:
         assert result["confidence"] == "low"
         assert "추천 실패" in result["reason"]
 
-    def test_8b_dashboard_wraps_suggest_mode_in_try_except(self):
-        block = _mode_block()
-        idx = block.find("RC.suggest_mode(")
-        assert idx != -1
-        assert "try:" in block[:idx][-200:]
-        assert "except Exception" in block[idx:idx + 300]
-
-
-# ── 9. 사용자 override 안전성 ────────────────────────────────────────────────
-
-class TestUserOverridePreserved:
-    def test_9_mode_suggest_stored_in_dedicated_key_only(self):
-        """추천 결과는 af_mode_suggest 전용 키에만 저장되고, 기존 Mode 선택 트리거인
-        af_gen(A)/af_gen_contract(B) 버튼의 session_state를 직접 건드리지 않는다."""
-        block = _mode_block()
-        assert 'st.session_state["af_mode_suggest"]' in block
-        assert '"af_gen"' not in block
-        assert '"af_gen_contract"' not in block
-
-    def test_9b_no_widget_key_for_mode_selection_overwritten(self):
-        """Mode 자체를 담는 라디오/셀렉트 위젯 key(af_tier처럼)를 새로 만들어
-        덮어쓰지 않는다 — 기존과 동일하게 버튼 클릭으로만 Mode가 결정된다."""
-        block = _mode_block()
-        assert "st.radio(" not in block
-        assert "st.selectbox(" not in block
-
 
 # ── 10. 자동 생성 직접 호출 금지 ─────────────────────────────────────────────
 
 class TestNoAutoGenerationCall:
-    def test_10_mode_block_never_calls_generation_functions(self):
-        block = _mode_block()
-        assert "AF.generate_app(" not in block
-        assert "AF.generate_app_with_contract(" not in block
-        assert "AF.save_app(" not in block
 
     def test_10b_suggest_mode_source_never_calls_generation_functions(self):
         # 함수 본문(docstring 제외)에는 generate_app/save_app 호출이 전혀 없어야 한다.
@@ -213,13 +159,6 @@ class TestNoLegalRefsAutoConfirm:
         assert "legal_refs" not in src
         assert "entity_id" not in src
 
-    def test_11b_mode_block_never_writes_legal_refs_state(self):
-        """캡션 등 안내 문구에는 legal_refs가 언급될 수 있으나(정상),
-        실제 session_state 쓰기/필드 대입은 없어야 한다."""
-        code = _mode_block_code_only()
-        assert 'st.session_state["af_contract_legal_refs"]' not in code
-        assert "entity_id" not in code
-
 
 # ── 12. test_cases 자동 생성 금지 ────────────────────────────────────────────
 
@@ -227,10 +166,6 @@ class TestNoTestCasesAutoGeneration:
     def test_12_suggest_mode_never_touches_test_cases(self):
         src = _func_source_without_docstring(rc_mod.suggest_mode)
         assert "test_cases" not in src
-
-    def test_12b_mode_block_never_writes_test_cases_state(self):
-        code = _mode_block_code_only()
-        assert 'st.session_state["af_contract_test_cases"]' not in code
 
 
 # ── 13. Tier2-B 독립성(함수 레벨) ────────────────────────────────────────────
