@@ -12,7 +12,7 @@
 |------|------|------|
 | Task Scheduler `\CalcMate-FastAPI` | **Running** | FastAPI + Worker 단일 자동 owner |
 | Task Scheduler `\블로그배포` | **Running** | `run_wp_blog_deploy_live.bat` (wp_blog_deploy 루프) |
-| Task Scheduler `\블로그1회예약` | **Disabled** | 실행 안 됨 |
+| Task Scheduler `\블로그1회예약` | **REMOVED** | 삭제됨(2026-10-04, Action BAT 부재 legacy Task) |
 | Streamlit Content Sync owner | **REMOVED** | `dashboard.py` 삭제됨 |
 | Root launcher (`run_sync.py/bat`) | **REMOVED** | 삭제됨 |
 | `scripts/run_sync.bat` | **REMOVED** | 삭제됨(삭제된 `run_sync.py`를 호출하던 one-shot launcher) |

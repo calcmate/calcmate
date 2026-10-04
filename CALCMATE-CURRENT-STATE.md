@@ -152,7 +152,7 @@ WordPress Origin:     https://blog.genon.app         (blog_articles.wp_permalink
 | Recurring scheduler | `BLOG_SCHEDULE.enabled=false` | HOLD |
 
 현재 플래그: `BLOG_SCHEDULE.enabled=false`(mode draft), `AUTO_PUBLISHING.enabled=false`.
-Windows 작업: `\블로그1회예약` Disabled.
+Windows 작업: `\블로그1회예약` 삭제됨(2026-10-04). 프로젝트 Task는 `\CalcMate-FastAPI`, `\블로그배포`만 남아 있다.
 
 데이터 현황:
 
