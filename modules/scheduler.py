@@ -44,6 +44,287 @@ STATUSES = ("pending", "running", "completed", "failed", "retry")
 # (일시적 오류/예외는 여기 없음 → 기존 retry_in_slot 유지)
 NON_RETRYABLE_REASONS = ("no_calculators", "후보소진", "모든후보HOLD", "no_items")
 
+# Lock ownership token storage (for both recurring and oneoff locks)
+_LOCK_OWNER_TOKENS: dict[str, dict] = {}
+
+# owner token의 process_start_time 비교 허용 오차(초). PID 재사용 판정은
+# "현재 그 PID를 가진 프로세스가 token 기록 프로세스보다 나중에 생성됨"일 때만 한다.
+_PROCESS_START_TOLERANCE = 1.0
+
+# Windows 프로세스 조회 상수 (ctypes kernel32 — Windows에서 signal 0 kill은
+# CTRL_C_EVENT 전송이므로 liveness 확인에 kill 계열 호출을 사용하지 않는다)
+_WIN_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_WIN_ERROR_INVALID_PARAMETER = 87
+_WIN_STILL_ACTIVE = 259
+_WIN_EPOCH_AS_FILETIME = 116444736000000000
+
+
+def _win_kernel32():
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    k32.GetExitCodeProcess.restype = wintypes.BOOL
+    k32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+    k32.GetProcessTimes.restype = wintypes.BOOL
+    k32.GetCurrentProcess.argtypes = []
+    k32.GetCurrentProcess.restype = wintypes.HANDLE
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    k32.CloseHandle.restype = wintypes.BOOL
+    return k32
+
+
+def _win_creation_time(k32, handle) -> float | None:
+    """프로세스 handle의 생성 시각(epoch 초). 실패 시 None."""
+    import ctypes
+    from ctypes import wintypes
+    created, exited, kernel, user = (wintypes.FILETIME() for _ in range(4))
+    if not k32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited),
+                               ctypes.byref(kernel), ctypes.byref(user)):
+        return None
+    ft = (created.dwHighDateTime << 32) | created.dwLowDateTime
+    if ft <= 0:
+        return None
+    return (ft - _WIN_EPOCH_AS_FILETIME) / 1e7
+
+
+def _win_query_process(pid: int) -> tuple[str, float | None]:
+    """Windows에서 신호/이벤트 전송 없이 프로세스 상태를 조회한다.
+    반환: ("alive"|"dead"|"unknown", 생성 시각 또는 None)."""
+    import ctypes
+    from ctypes import wintypes
+    k32 = _win_kernel32()
+    handle = k32.OpenProcess(_WIN_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        if ctypes.get_last_error() == _WIN_ERROR_INVALID_PARAMETER:
+            return "dead", None        # 해당 PID 프로세스 없음
+        return "unknown", None         # 접근 거부 등 → 판단 불가
+    try:
+        code = wintypes.DWORD()
+        if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return "unknown", None
+        if code.value != _WIN_STILL_ACTIVE:
+            return "dead", None        # 종료됐으나 handle만 남은 프로세스
+        return "alive", _win_creation_time(k32, handle)
+    finally:
+        k32.CloseHandle(handle)
+
+
+def _posix_query_process(pid: int) -> tuple[str, float | None]:
+    """POSIX: 신호 없이 /proc로만 확인한다. /proc가 없으면 판단 불가(unknown → 탈취 금지)."""
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return "unknown", None
+    return ("alive" if (proc / str(pid)).exists() else "dead"), None
+
+
+def _query_process(pid) -> tuple[str, float | None]:
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return "unknown", None
+    try:
+        if os.name == "nt":
+            return _win_query_process(pid)
+        return _posix_query_process(pid)
+    except Exception:
+        return "unknown", None
+
+
+def _compute_process_start_time() -> float | None:
+    """현재 프로세스의 실제 생성 시각(epoch 초). Windows는 GetProcessTimes, 그 외/실패 시 None."""
+    if os.name != "nt":
+        return None
+    try:
+        k32 = _win_kernel32()
+        return _win_creation_time(k32, k32.GetCurrentProcess())
+    except Exception:
+        return None
+
+
+# Process start time for PID reuse protection (실제 프로세스 생성 시각; 조회 불가 시 None)
+_PROCESS_START_TIME: float | None = _compute_process_start_time()
+
+
+def _get_process_start_time() -> float | None:
+    """Return the process start time for PID reuse protection."""
+    return _PROCESS_START_TIME
+
+
+def _build_owner_token() -> dict:
+    """Build owner identity token with PID, process start time, UUID, and timestamp."""
+    return {
+        "pid": os.getpid(),
+        "process_start_time": _PROCESS_START_TIME,
+        "token": uuid.uuid4().hex,
+        "created_at": datetime.now(KST).isoformat(),
+    }
+
+
+def _serialize_token(token: dict) -> str:
+    """Serialize owner token to string for lock file storage."""
+    return json.dumps(token, separators=(",", ":"), ensure_ascii=False)
+
+
+def _deserialize_token(content: str) -> dict | None:
+    """Deserialize owner token from lock file content."""
+    try:
+        data = json.loads(content)
+        if isinstance(data, dict) and "pid" in data and "token" in data:
+            return data
+    except Exception:
+        pass
+    return None
+
+
+def _is_valid_owner_token(owner) -> bool:
+    """stale recovery 허용 대상인 정상 owner token인지 확인한다(_build_owner_token schema).
+    pid: 양의 int / process_start_time: 양수 또는 None(조회 불가 기록) /
+    token: 비어 있지 않은 str / created_at: 비어 있지 않은 str."""
+    if not isinstance(owner, dict):
+        return False
+    pid = owner.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return False
+    start = owner.get("process_start_time", 0)
+    if start is not None and (isinstance(start, bool) or not isinstance(start, (int, float)) or start <= 0):
+        return False
+    for key in ("token", "created_at"):
+        value = owner.get(key)
+        if not isinstance(value, str) or not value.strip():
+            return False
+    return True
+
+
+def _is_process_alive(pid: int, process_start_time) -> bool:
+    """owner 프로세스가 살아 있을 수 있으면 True(보수적). False는 다음 경우에만 반환한다.
+    - 해당 PID 프로세스가 확실히 없음(종료)
+    - PID는 살아 있으나 token 기록 프로세스보다 나중에 생성됨(PID 재사용 확정)
+    상태/생성 시각을 확인할 수 없으면 True(탈취 금지)."""
+    state, created = _query_process(pid)
+    if state == "dead":
+        return False
+    if state != "alive":
+        return True
+    if isinstance(process_start_time, bool) or not isinstance(process_start_time, (int, float)) \
+            or process_start_time <= 0 or created is None:
+        return True
+    # owner 프로세스는 token의 process_start_time 이전(또는 동시)에 생성됐어야 한다.
+    return created <= process_start_time + _PROCESS_START_TOLERANCE
+
+
+def _create_lock_file(p: Path, tokens: dict):
+    """O_CREAT|O_EXCL로 lock 생성 후 owner token 기록. 성공 시 token dict, 실패 시 None."""
+    token = _build_owner_token()
+    try:
+        fd = os.open(str(p), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except Exception:
+        return None
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(_serialize_token(token))
+    except Exception:
+        # 방금 O_EXCL로 만든 자기 파일만 정리한다
+        try:
+            p.unlink()
+        except Exception:
+            pass
+        return None
+    tokens[str(p)] = token
+    return token
+
+
+def _remove_stale_lock(p: Path, evaluated: str) -> bool:
+    """stale 판정한 lock을 제거한다. 판정과 제거 사이에 다른 프로세스가 lock을
+    교체했을 수 있으므로 unlink 대신 고유 tombstone으로 rename한 뒤, 옮겨진 내용이
+    판정한 내용과 같을 때만 삭제한다. 다르면 os.link로 원래 이름에 복원하고(대상이 있으면
+    실패 → 덮어쓰지 않음) False. 복원 실패 시 tombstone은 보존한다."""
+    tomb = p.with_name(f"{p.name}.stale-{uuid.uuid4().hex}")
+    try:
+        os.rename(str(p), str(tomb))
+    except FileNotFoundError:
+        return True                    # 이미 다른 프로세스가 정리함 → O_EXCL 경쟁으로 진행
+    except Exception:
+        return False
+    try:
+        moved = tomb.read_text(encoding="utf-8")
+    except Exception:
+        moved = None
+    if moved == evaluated:
+        try:
+            tomb.unlink()
+        except Exception:
+            pass
+        return True
+    # 다른 owner의 새 lock을 옮긴 경우 → 복원. os.rename은 POSIX에서 기존 대상을 덮어쓰므로
+    # 사용하지 않고, 대상이 있으면 FileExistsError로 실패하는 os.link 후 tombstone만 제거한다.
+    try:
+        os.link(str(tomb), str(p))
+    except Exception:
+        LOG.warning("Lock restore failed after stale race (tombstone kept): %s", tomb.name)
+        return False
+    try:
+        os.unlink(str(tomb))
+    except Exception:
+        LOG.warning("Lock restored but tombstone cleanup failed: %s", tomb.name)
+    return False
+
+
+def _recover_stale_lock(p: Path, stale_seconds: int) -> bool:
+    """lock이 없거나 안전하게 제거되면 True. 살아 있는 owner·판단 불가·읽기 실패 시 False."""
+    try:
+        if not p.exists():
+            return True
+        if time.time() - p.stat().st_mtime <= stale_seconds:
+            return False
+        content = p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return True
+    except Exception:
+        return False                   # token 읽기 실패 → 삭제하지 않는다
+    owner = _deserialize_token(content)
+    if not _is_valid_owner_token(owner):
+        # malformed/empty/구버전 형식 → owner 확인 불가 → stale이어도 자동 삭제하지 않는다
+        LOG.warning("Stale lock kept: owner token unverifiable (manual check required): %s", p.name)
+        return False
+    if _is_process_alive(owner["pid"], owner.get("process_start_time")):
+        LOG.debug("Lock held by alive process (pid=%s) - not stealing", owner["pid"])
+        return False
+    # owner 종료 또는 PID 재사용 확정 → stale 정책대로 제거
+    return _remove_stale_lock(p, content)
+
+
+def _release_owned_lock(p: Path, tokens: dict, token: dict = None) -> bool:
+    """이 프로세스가 획득한 token과 lock 파일 내용이 일치할 때만 삭제한다.
+    내 token이 없으면 삭제하지 않는다(lock 파일 자신의 token으로 대체하지 않음)."""
+    lock_key = str(p)
+    stored = tokens.get(lock_key)
+    token = token or stored
+    if not isinstance(token, dict):
+        return False
+    is_stored = token == stored
+    try:
+        current = p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        if is_stored:
+            tokens.pop(lock_key, None)
+        return False
+    except Exception:
+        return False
+    if _serialize_token(token) != current:
+        LOG.warning("Lock release skipped: token mismatch (other owner): %s", p.name)
+        if is_stored:
+            tokens.pop(lock_key, None)
+        return False
+    try:
+        p.unlink()
+    except FileNotFoundError:
+        pass
+    except Exception:
+        return False
+    tokens.pop(lock_key, None)
+    return True
+
 def _is_non_retryable_reason(reason) -> bool:
     r = str(reason or "").strip()
     return r.startswith("budget") or r in NON_RETRYABLE_REASONS
@@ -603,25 +884,22 @@ def run_scheduler_loop(cfg: dict, run_once_fn, poll_seconds: int = 30):
         time.sleep(poll_seconds)
 
 
-# ── 수동 실행 충돌 방지용 단순 파일 락 ────────────────────────────
+# ── 수동 실행 충돌 방지용 파일 락 (CALCMATE-LOCK-HARDENING-01) ──
+# O_CREAT|O_EXCL로 원자적 생성, owner token(PID+process_start+UUID+timestamp) 기록
+# stale recovery 시 owner process liveness 확인 후 탈취 방지
+# release 시 token 검증으로 다른 owner의 lock 보호
 def _acquire_lock(cfg: dict, stale_seconds: int = 1800) -> bool:
     p = _lock_path(cfg)
-    if p.exists():
-        try:
-            if time.time() - p.stat().st_mtime > stale_seconds:
-                p.unlink(missing_ok=True)  # stale lock 제거
-            else:
-                return False
-        except Exception:
-            return False
     try:
-        p.write_text(datetime.now().isoformat(), encoding="utf-8")
-        return True
+        if not _recover_stale_lock(p, stale_seconds):
+            return False
+        return _create_lock_file(p, _LOCK_OWNER_TOKENS) is not None
     except Exception:
         return False
 
-def _release_lock(cfg: dict):
-    _lock_path(cfg).unlink(missing_ok=True)
+
+def _release_lock(cfg: dict) -> bool:
+    return _release_owned_lock(_lock_path(cfg), _LOCK_OWNER_TOKENS)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -883,54 +1161,22 @@ def _acquire_oneoff_lock(cfg: dict, stale_seconds: int = 1800):
     """기존 _acquire_lock()과 동일한 패턴이나 완전히 별도 파일을 사용한다 —
     recurring 루프의 scheduler.lock과 절대 공유하지 않는다.
 
-    SINGLE-OWNER-HARDENING S1: exists()→write_text() 대신 O_CREAT|O_EXCL로 원자적
-    생성하고 owner token("pid:uuid:시각")을 기록한다. 성공 시 token(참값) 반환,
-    실패 시 False — 기존 호출부의 참/거짓 판정은 그대로 동작한다. stale 정책
-    (stale_seconds=1800)은 유지하되, 삭제 직전에 mtime을 다시 확인한다."""
+    LOCK-HARDENING: O_CREAT|O_EXCL로 원자적 생성하고 owner token(PID+process_start+UUID+timestamp)을
+    JSON으로 기록한다. 성공 시 token dict 반환, 실패 시 False.
+    stale recovery 시 owner process liveness 확인 후 탈취 방지(token 읽기 실패 시 삭제하지 않음)."""
     p = _oneoff_lock_path(cfg)
     try:
-        if p.exists() and time.time() - p.stat().st_mtime > stale_seconds:
-            if time.time() - p.stat().st_mtime > stale_seconds:
-                p.unlink(missing_ok=True)
-    except FileNotFoundError:
-        pass
+        if not _recover_stale_lock(p, stale_seconds):
+            return False
+        token = _create_lock_file(p, _ONEOFF_LOCK_TOKENS)
     except Exception:
         return False
-    token = f"{os.getpid()}:{uuid.uuid4().hex}:{datetime.now(KST).isoformat()}"
-    try:
-        fd = os.open(str(p), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except Exception:
-        return False
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(token)
-    except Exception:
-        p.unlink(missing_ok=True)
-        return False
-    _ONEOFF_LOCK_TOKENS[str(p)] = token
-    return token
+    return token if token is not None else False
 
 
-def _release_oneoff_lock(cfg: dict, token: str = None) -> bool:
+def _release_oneoff_lock(cfg: dict, token: dict = None) -> bool:
     """자신이 획득한 lock(token 일치)만 삭제한다 — 다른 owner의 lock은 지우지 않는다."""
-    p = _oneoff_lock_path(cfg)
-    token = token or _ONEOFF_LOCK_TOKENS.get(str(p))
-    if not token:
-        return False
-    try:
-        current = p.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        _ONEOFF_LOCK_TOKENS.pop(str(p), None)
-        return False
-    except Exception:
-        return False
-    if current != token:
-        LOG.warning("1회성 예약 lock 해제 생략: 다른 owner의 lock")
-        _ONEOFF_LOCK_TOKENS.pop(str(p), None)
-        return False
-    p.unlink(missing_ok=True)
-    _ONEOFF_LOCK_TOKENS.pop(str(p), None)
-    return True
+    return _release_owned_lock(_oneoff_lock_path(cfg), _ONEOFF_LOCK_TOKENS, token)
 
 
 def _blog_schedule_config_path(cfg: dict) -> Path:

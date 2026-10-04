@@ -60,8 +60,12 @@ from . import publisher
 from . import telegram_ops
 from .config_loader import is_wordpress_ready
 from .logger import get_logger
+from .scheduler import _create_lock_file, _recover_stale_lock, _release_owned_lock
 
 LOG = get_logger()
+
+# Lock ownership token storage for content_sync.lock
+_CONTENT_SYNC_LOCK_TOKENS: dict[str, dict] = {}
 
 # sync_flag 값
 FLAG_OK = "OK"
@@ -128,23 +132,26 @@ def _save_state(cfg: dict, state: dict):
         LOG.warning("[sync] state 기록 실패: %s", e)
 
 def _acquire_lock(cfg: dict, stale_seconds: int = 3600) -> bool:
+    """Acquire content_sync.lock with owner-aware atomic acquisition.
+
+    Uses O_CREAT|O_EXCL for atomic creation, stores owner token (PID, process_start_time, UUID, timestamp),
+    verifies process liveness before stale recovery, and protects against PID reuse.
+    """
     p = _lock_path(cfg)
-    if p.exists():
-        try:
-            if time.time() - p.stat().st_mtime > stale_seconds:
-                p.unlink(missing_ok=True)  # stale lock 제거
-            else:
-                return False
-        except Exception:
-            return False
     try:
-        p.write_text(datetime.now().isoformat(), encoding="utf-8")
-        return True
+        if not _recover_stale_lock(p, stale_seconds):
+            return False
+        return _create_lock_file(p, _CONTENT_SYNC_LOCK_TOKENS) is not None
     except Exception:
         return False
 
-def _release_lock(cfg: dict):
-    _lock_path(cfg).unlink(missing_ok=True)
+def _release_lock(cfg: dict) -> bool:
+    """Release content_sync.lock only if current owner matches local token.
+
+    Verifies the lock file's current token matches the token this process acquired,
+    preventing accidental deletion of another owner's lock. No local token → no delete.
+    """
+    return _release_owned_lock(_lock_path(cfg), _CONTENT_SYNC_LOCK_TOKENS)
 
 def _append_history(cfg: dict, record: dict):
     """sync 실행/이상 1건 기록. scheduler.py 의 _append_history 패턴."""
