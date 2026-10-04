@@ -11,9 +11,13 @@ FastAPI
   ├─ WP Blog Sync Worker
   └─ Calculator WebApp Scheduler Worker
 """
+import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from starlette.responses import JSONResponse
+
+from api.dependencies import fail
 
 from api.routers.scheduler import router as scheduler_router
 from api.routers.publishing_policy import router as publishing_policy_router
@@ -72,12 +76,59 @@ async def lifespan(app: FastAPI):
         get_worker_manager().stop_all_workers()
 
 
+# ── HARDEN-01: localhost Host/Origin guard ───────────────────────────────────
+# LOCAL_MODE(로그인 없이 local-admin)는 그대로 둔다. 이 guard는 인증보다 먼저
+# 실행되어 (1) localhost가 아닌 Host(DNS rebinding 등)를 모든 method에서 차단하고
+# (2) 상태 변경 요청(POST/PUT/PATCH/DELETE)에 외부 Origin이 붙어 있으면 차단한다.
+# Origin 헤더가 없는 요청(curl/Python/내부 스크립트)과 GET은 Origin으로 막지 않는다.
+# Vite proxy(changeOrigin: true)는 Host를 127.0.0.1:8000으로 바꾸고 Origin은 유지한다.
+# 서버가 IPv4 127.0.0.1에만 bind되어 있으므로 [::1]은 허용하지 않는다.
+_ALLOWED_HOSTS = frozenset({("127.0.0.1", 8000), ("localhost", 8000)})
+_ALLOWED_ORIGINS = frozenset({"http://127.0.0.1:5173", "http://localhost:5173"})
+_ORIGIN_CHECKED_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_HOST_RE = re.compile(r"^([a-z0-9.-]+)(?::([1-9][0-9]{0,4}))?$")
+
+
+def _parse_host(value: str):
+    """Host 헤더 → (hostname, port|None). 형식이 맞지 않으면 None."""
+    m = _HOST_RE.match(value.strip().lower())
+    if not m:
+        return None
+    return m.group(1), (int(m.group(2)) if m.group(2) else None)
+
+
+class LocalhostGuardMiddleware:
+    """Host allowlist(모든 HTTP 요청) + Origin allowlist(상태 변경 요청) ASGI middleware."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = scope.get("headers") or []
+        hosts = [v for k, v in headers if k == b"host"]
+        if len(hosts) != 1 or _parse_host(hosts[0].decode("latin-1")) not in _ALLOWED_HOSTS:
+            await JSONResponse(fail("INVALID_HOST", "허용되지 않은 Host입니다."),
+                               status_code=400)(scope, receive, send)
+            return
+        if scope["method"].upper() in _ORIGIN_CHECKED_METHODS:
+            origins = [v for k, v in headers if k == b"origin"]
+            if len(origins) > 1 or (origins and origins[0].decode("latin-1") not in _ALLOWED_ORIGINS):
+                await JSONResponse(fail("FORBIDDEN_ORIGIN", "허용되지 않은 Origin입니다."),
+                                   status_code=403)(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
 app = FastAPI(
     title="CalcMate API",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
 )
+app.add_middleware(LocalhostGuardMiddleware)
 
 app.include_router(scheduler_router)
 app.include_router(publishing_policy_router)

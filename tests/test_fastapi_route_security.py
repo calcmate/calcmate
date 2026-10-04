@@ -10,6 +10,10 @@ route를 재귀적으로 수집해 검사한다. 실제 endpoint를 호출하지
 import sys
 from pathlib import Path
 
+import pytest
+from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -422,3 +426,156 @@ def test_route_inspection_makes_no_external_http_calls(monkeypatch):
     routes = collect_routes(app)
     assert len(routes) > 0
     assert write_routes(app) == sorted(EXPECTED_WRITE_ROUTES)
+
+
+# ── HARDEN-01: localhost Host/Origin guard ──────────────────────────────────
+# 운영 FastAPI에는 요청을 보내지 않는다. 상태 변경 검증은 guard만 씌운 테스트 전용
+# ASGI app에서 하고(handler 도달 여부를 직접 기록), 실제 api.main.app에는 GET
+# /api/health만 보낸다.
+
+_LOCAL = "http://127.0.0.1:8000"
+_REACT_ORIGINS = ("http://127.0.0.1:5173", "http://localhost:5173")
+
+
+def _guarded_test_app():
+    from api.main import LocalhostGuardMiddleware
+    from api.auth.dependencies import require_admin
+
+    calls = []
+    test_app = FastAPI()
+    test_app.add_middleware(LocalhostGuardMiddleware)
+
+    @test_app.get("/ping")
+    def ping():
+        calls.append("GET /ping")
+        return {"ok": True}
+
+    @test_app.api_route("/mutate", methods=["POST", "PUT", "PATCH", "DELETE"])
+    def mutate():
+        calls.append("mutate")
+        return {"ok": True}
+
+    @test_app.post("/admin-mutate")
+    def admin_mutate(user=Depends(require_admin)):
+        calls.append("admin-mutate")
+        return {"user": user.id}
+
+    return test_app, calls
+
+
+def test_guard_allowlists_are_exactly_localhost():
+    import api.main as main
+    assert main._ALLOWED_HOSTS == frozenset({("127.0.0.1", 8000), ("localhost", 8000)})
+    assert main._ALLOWED_ORIGINS == frozenset(_REACT_ORIGINS)
+    assert main._ORIGIN_CHECKED_METHODS == frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def test_guard_is_installed_on_the_real_app():
+    from api.main import LocalhostGuardMiddleware
+    assert any(m.cls is LocalhostGuardMiddleware for m in _app().user_middleware)
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1:8000", "localhost:8000", "LOCALHOST:8000"])
+def test_real_app_health_allows_localhost_hosts(host):
+    client = TestClient(_app(), base_url=_LOCAL)
+    res = client.get("/api/health", headers={"host": host})
+    assert res.status_code == 200
+    assert res.json()["data"]["status"] == "ok"
+
+
+@pytest.mark.parametrize("host", [
+    "evil.example", "127.0.0.1:8001", "localhost:8001", "127.0.0.1", "localhost",
+    "[::1]:8000", "127.0.0.1:8000.evil.example", "127.0.0.1:08000", "",
+])
+def test_real_app_health_blocks_other_hosts(host):
+    client = TestClient(_app(), base_url=_LOCAL)
+    res = client.get("/api/health", headers={"host": host})
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "INVALID_HOST"
+
+
+def test_real_app_get_with_foreign_origin_is_not_blocked():
+    client = TestClient(_app(), base_url=_LOCAL)
+    res = client.get("/api/health", headers={"origin": "https://evil.example"})
+    assert res.status_code == 200
+
+
+@pytest.mark.parametrize("origin", _REACT_ORIGINS)
+def test_state_change_from_react_origin_reaches_handler(origin):
+    test_app, calls = _guarded_test_app()
+    res = TestClient(test_app, base_url=_LOCAL).post("/mutate", headers={"origin": origin})
+    assert res.status_code == 200
+    assert calls == ["mutate"]
+
+
+def test_state_change_without_origin_reaches_handler():
+    test_app, calls = _guarded_test_app()
+    res = TestClient(test_app, base_url=_LOCAL).post("/mutate")
+    assert res.status_code == 200
+    assert calls == ["mutate"]
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE"])
+@pytest.mark.parametrize("origin", [
+    "https://evil.example", "http://evil.example", "http://127.0.0.1:3000",
+    "http://localhost:8000", "null", "HTTP://LOCALHOST:5173",
+])
+def test_state_change_from_foreign_origin_is_blocked_before_handler(method, origin):
+    test_app, calls = _guarded_test_app()
+    res = TestClient(test_app, base_url=_LOCAL).request(method, "/mutate", headers={"origin": origin})
+    assert res.status_code == 403
+    assert res.json()["error"]["code"] == "FORBIDDEN_ORIGIN"
+    assert calls == []
+
+
+def test_duplicate_origin_headers_are_blocked():
+    test_app, calls = _guarded_test_app()
+    res = TestClient(test_app, base_url=_LOCAL).post(
+        "/mutate", headers=[("origin", "http://127.0.0.1:5173"), ("origin", "https://evil.example")])
+    assert res.status_code == 403
+    assert calls == []
+
+
+def test_get_with_foreign_origin_reaches_handler():
+    test_app, calls = _guarded_test_app()
+    res = TestClient(test_app, base_url=_LOCAL).get("/ping", headers={"origin": "https://evil.example"})
+    assert res.status_code == 200
+    assert calls == ["GET /ping"]
+
+
+def test_invalid_host_is_blocked_before_origin_check_and_handler():
+    test_app, calls = _guarded_test_app()
+    res = TestClient(test_app, base_url=_LOCAL).post(
+        "/mutate", headers={"host": "evil.example", "origin": "http://127.0.0.1:5173"})
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "INVALID_HOST"
+    assert calls == []
+
+
+def test_options_does_not_bypass_origin_guard():
+    test_app, calls = _guarded_test_app()
+    res = TestClient(test_app, base_url=_LOCAL).options(
+        "/mutate", headers={"origin": "https://evil.example", "access-control-request-method": "POST"})
+    assert res.status_code == 405
+    assert calls == []
+
+
+def test_local_mode_admin_still_works_but_not_from_foreign_origin(monkeypatch):
+    monkeypatch.setenv("CALCMATE_DASHBOARD_LOCAL_MODE", "1")
+    test_app, calls = _guarded_test_app()
+    client = TestClient(test_app, base_url=_LOCAL)
+
+    ok_res = client.post("/admin-mutate", headers={"origin": "http://localhost:5173"})
+    assert ok_res.status_code == 200 and ok_res.json() == {"user": "local-admin"}
+    no_origin = client.post("/admin-mutate")
+    assert no_origin.status_code == 200 and no_origin.json() == {"user": "local-admin"}
+    blocked = client.post("/admin-mutate", headers={"origin": "https://evil.example"})
+    assert blocked.status_code == 403
+    assert calls == ["admin-mutate", "admin-mutate"]
+
+
+def test_default_testclient_uses_an_allowed_host():
+    """conftest가 TestClient 기본 base_url을 127.0.0.1:8000으로 바꿔 기존 API 테스트가
+    실제 allowlist를 통과한다(allowlist에 testserver를 넣지 않는다)."""
+    res = TestClient(_app()).get("/api/health")
+    assert res.status_code == 200

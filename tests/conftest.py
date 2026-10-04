@@ -369,6 +369,17 @@ def _recording_send_telegram(cfg, message):
                               "has_chat_id": bool((cfg or {}).get("TELEGRAM_CHAT_ID"))})
 
 
+# HARDEN-01: api.main의 Host guard는 127.0.0.1:8000 / localhost:8000만 허용한다.
+# TestClient 기본 base_url(http://testserver)을 운영과 같은 http://127.0.0.1:8000으로
+# 바꿔 기존 API 테스트가 실제 allowlist를 그대로 통과하게 한다(allowlist에 테스트용
+# Host를 추가하지 않는다). base_url을 명시한 테스트는 그 값을 그대로 쓴다.
+_TESTCLIENT_ORIG_INIT = None
+
+
+def _local_testclient_init(self, app, base_url="http://127.0.0.1:8000", *args, **kwargs):
+    _TESTCLIENT_ORIG_INIT(self, app, base_url, *args, **kwargs)
+
+
 @pytest.fixture(autouse=True)
 def _block_production_access(monkeypatch, tmp_path_factory):
     """모든 테스트에 적용되는 운영 접근 차단. LOCAL_MODE를 검증하는 테스트는 테스트
@@ -408,6 +419,12 @@ def _block_production_access(monkeypatch, tmp_path_factory):
     monkeypatch.setattr(io, "open", _guarded_open)
     monkeypatch.setattr(os, "replace", _guarded_os_replace)
     monkeypatch.setattr(os, "rename", _guarded_os_rename)
+    # G. HARDEN-01: TestClient 기본 Host를 127.0.0.1:8000으로(위 _local_testclient_init 참고)
+    global _TESTCLIENT_ORIG_INIT
+    from starlette.testclient import TestClient as _StarletteTestClient
+    if _TESTCLIENT_ORIG_INIT is None:
+        _TESTCLIENT_ORIG_INIT = _StarletteTestClient.__init__
+    monkeypatch.setattr(_StarletteTestClient, "__init__", _local_testclient_init)
     BLOCKED_ATTEMPTS.clear()
     yield
     _ISOLATED["budget"] = None
