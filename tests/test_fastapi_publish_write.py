@@ -21,13 +21,13 @@ from _route_utils import collect_routes, write_routes
 VIEWER_TOKEN = "step18r-test-viewer-token"
 ADMIN_TOKEN = "step18r-test-admin-token"
 
+# 92개 — tests/test_fastapi_route_security.py의 canonical 목록과 동기화한다.
 EXPECTED_WRITE_ROUTES = frozenset({
     ("/api/scheduler/blog/config", "PATCH"),
     ("/api/scheduler/blog/run-once", "POST"),
     ("/api/publish/{article_id}/edit", "POST"),
     ("/api/trash/{article_id}", "POST"),
     ("/api/trash/{article_id}/restore", "POST"),
-    # STEP 4-F: Settings General PATCH가 require_admin() 뒤에서 정당하게 추가됨.
     ("/api/settings/general", "PATCH"),
     ("/api/settings/image-google", "PATCH"),
     # STEP 4-G: Calculator Formula PATCH가 require_admin() 뒤에서 정당하게 추가됨.
@@ -58,30 +58,102 @@ EXPECTED_WRITE_ROUTES = frozenset({
     ("/api/calculators/{slug}/review/unapprove", "POST"),
     # STEP S3: 실질 헬스체크(외부 서비스) 재실행 POST가 require_admin() 뒤에서 정당하게 추가됨.
     ("/api/health/external/run", "POST"),
+    # STEP S5: Cost Manager 수동 재개 / Retry Queue 수동 재시도 POST 2개가
+    # require_admin() 뒤에서 정당하게 추가됨.
     ("/api/costs/resume", "POST"),
     ("/api/costs/retry", "POST"),
+    # STEP S6: Retry Queue 수동 제거 POST가 require_admin() 뒤에서 정당하게 추가됨.
     ("/api/costs/remove", "POST"),
+    # STEP S8: Strategy Room 실행 POST가 require_admin() 뒤에서 정당하게 추가됨.
     ("/api/strategy-room/run", "POST"),
+    # STEP S10: Content Sync 수동 실행 POST가 require_admin() 뒤에서 정당하게 추가됨.
     ("/api/scheduler/content-sync/run-once", "POST"),
+    # STEP S11: Dashboard Quick Action 「계산기 생성」 수동 실행 POST가 require_admin()
+    # 뒤에서 정당하게 추가됨(/api/scheduler/calculator/status의 GET과는 별개).
     ("/api/scheduler/calculator/run-once", "POST"),
+    # STEP S12: Dashboard Quick Action 「파이프라인 실행(전량)」 수동 실행 POST가
+    # require_admin() 뒤에서 정당하게 추가됨(/api/scheduler/blog/run-once와는 다른 함수).
     ("/api/scheduler/pipeline/run-once", "POST"),
+    # STEP S13: Dashboard Quick Action 「▶ 실행」(통합 실행) 수동 실행 POST가
+    # require_admin() 뒤에서 정당하게 추가됨(새 pipeline이 아니라 S11/S12 서비스를 재사용하는 dispatcher).
     ("/api/scheduler/integrated/run-once", "POST"),
+    # STEP P2-06: Site Management 생성/Import POST 2개가 require_admin() 뒤에서
+    # 정당하게 추가됨(P2-04의 GET /api/sites 조회와는 별개 endpoint).
     ("/api/sites", "POST"),
     ("/api/sites/import", "POST"),
+    # STEP P2-07: 사이트 기본 정보 수정(PUT)/Override 저장·초기화(POST)가
+    # require_admin() 뒤에서 정당하게 추가됨.
     ("/api/sites/{site_id}", "PUT"),
     ("/api/sites/{site_id}/override", "POST"),
     ("/api/sites/{site_id}/override/reset", "POST"),
+    # STEP P2-08: Activate/Deactivate/Archive/Restore POST 4개가
+    # require_admin() 뒤에서 정당하게 추가됨.
     ("/api/sites/{site_id}/activate", "POST"),
     ("/api/sites/{site_id}/deactivate", "POST"),
     ("/api/sites/{site_id}/archive", "POST"),
     ("/api/sites/{site_id}/restore", "POST"),
+    # STEP P2-09: Hard Delete(DELETE)/Clone(POST)가 require_admin() 뒤에서
+    # 정당하게 추가됨(이 프로젝트 전체에서 처음 등록되는 DELETE).
     ("/api/sites/{site_id}", "DELETE"),
     ("/api/sites/{site_id}/clone", "POST"),
     # CALCMATE-BLOG-PUBLISHING-POLICY-FASTAPI-REACT-CONNECTION-IMPLEMENT-01:
     # Publishing Policy/Auto Publishing PATCH 2개가 require_admin() 뒤에서
-    # 정당하게 추가됨(§WRITE-SURFACE-FIX-01).
+    # 정당하게 추가되어 이제 46개다(§WRITE-SURFACE-FIX-01).
     ("/api/scheduler/publishing-policy", "PATCH"),
     ("/api/scheduler/auto-publishing", "PATCH"),
+    # CALCMATE-MIGRATION-C-TEST-CONTRACT-FIX-02: Streamlit→FastAPI 이관(A 커밋 9b9f979)으로
+    # 추가된 write route 46개 — 전부 require_admin() 뒤에 있음을 확인한 뒤 등록(이제 92개).
+    # AI Assistant / AI Workspace
+    ("/api/assistant/chat", "POST"),
+    ("/api/assistant/files/create", "POST"),
+    ("/api/assistant/files/list", "POST"),
+    ("/api/assistant/files/preview", "POST"),
+    ("/api/assistant/files/read", "POST"),
+    ("/api/assistant/files/write", "POST"),
+    ("/api/assistant/memory", "POST"),
+    ("/api/assistant/tasks", "POST"),
+    ("/api/assistant/tasks/{task_id}", "PATCH"),
+    ("/api/workspace/chat", "POST"),
+    ("/api/workspace/files/create", "POST"),
+    ("/api/workspace/files/preview", "POST"),
+    ("/api/workspace/files/sandbox", "POST"),
+    ("/api/workspace/files/write", "POST"),
+    # App Factory AI 추천 / Contract / Mode A preview / GAP-01·02
+    ("/api/calculators/ai/suggest-formula", "POST"),
+    ("/api/calculators/ai/suggest-idea", "POST"),
+    ("/api/calculators/ai/suggest-mode", "POST"),
+    ("/api/calculators/ai/suggest-spec", "POST"),
+    ("/api/calculators/ai/suggest-tier", "POST"),
+    ("/api/calculators/ai/tier2b-keywords", "POST"),
+    ("/api/calculators/generate/contract/slug-suggest", "POST"),
+    ("/api/calculators/generate/contract/{job_id}/confirm-formula", "POST"),
+    ("/api/calculators/generate/preview", "POST"),
+    ("/api/calculators/generate/preview/{job_id}/discard", "POST"),
+    ("/api/calculators/generate/preview/{job_id}/save", "POST"),
+    ("/api/calculators/{slug}/delete/confirm", "POST"),
+    ("/api/calculators/{slug}/delete/prepare", "POST"),
+    ("/api/calculators/{slug}/status", "POST"),
+    # Scheduler (oneoff / webapp / content-sync 복구 / run-one / planner / topic reconciliation)
+    ("/api/scheduler/blog/oneoff", "POST"),
+    ("/api/scheduler/blog/run-once/oneoff", "POST"),
+    ("/api/scheduler/calculator-webapp/run-once", "POST"),
+    ("/api/scheduler/calculator/config", "PATCH"),
+    ("/api/scheduler/content-sync/resume", "POST"),
+    ("/api/scheduler/content-sync/retry", "POST"),
+    ("/api/scheduler/pipeline/run-one", "POST"),
+    ("/api/scheduler/planner/run-once", "POST"),
+    ("/api/scheduler/topics/{topic_id}/revert-candidate", "POST"),
+    ("/api/scheduler/topics/{topic_id}/wp-check", "POST"),
+    # Settings (계산기 노출 / 운영 설정 / 연결 테스트)
+    ("/api/settings/calculator-display", "PATCH"),
+    ("/api/settings/operations", "PATCH"),
+    ("/api/settings/telegram/test", "POST"),
+    ("/api/settings/wordpress/test", "POST"),
+    # Sites (사이트 공통 페이지 / GAP-03 전체 재빌드)
+    ("/api/sites/pages/deploy", "POST"),
+    ("/api/sites/pages/preview", "POST"),
+    ("/api/sites/pages/save", "POST"),
+    ("/api/sites/rebuild", "POST"),
 })
 
 FAKE_PUBLISHED_ROW = {
@@ -394,6 +466,8 @@ def test_audit_event_not_recorded_for_401_or_403():
 # ══════════════════════════════════════════════════════════════════════════
 
 def test_write_surface_is_exactly_five_routes():
+    """write surface가 canonical route inventory(EXPECTED_WRITE_ROUTES, 92개)와 정확히 일치하는지 확인한다
+    (함수명의 "five"는 역사적 이름)."""
     from api.main import app
     actual = frozenset(write_routes(app))
     assert actual == EXPECTED_WRITE_ROUTES, f"write surface 불일치: {sorted(actual)}"

@@ -16,10 +16,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi.testclient import TestClient
 
+import pytest
+
 from _route_utils import write_routes, collect_routes
 
 # STEP 18-R 기준(§14) — 기존 2개 + Publish Edit/Trash/Restore 3개 = 5개.
 # STEP 4-F에서 Settings General PATCH가 require_admin() 뒤에서 정당하게 추가되어 6개.
+# 92개 — tests/test_fastapi_route_security.py의 canonical 목록과 동기화한다.
 EXPECTED_WRITE_ROUTES = frozenset({
     ("/api/scheduler/blog/config", "PATCH"),
     ("/api/scheduler/blog/run-once", "POST"),
@@ -28,48 +31,130 @@ EXPECTED_WRITE_ROUTES = frozenset({
     ("/api/trash/{article_id}/restore", "POST"),
     ("/api/settings/general", "PATCH"),
     ("/api/settings/image-google", "PATCH"),
+    # STEP 4-G: Calculator Formula PATCH가 require_admin() 뒤에서 정당하게 추가됨.
     ("/api/calculators/{slug}/formula", "PATCH"),
+    # STEP 4-H-1: Calculator promote POST가 require_admin() 뒤에서 정당하게 추가됨.
     ("/api/calculators/{slug}/promote", "POST"),
+    # STEP 4-H-2: Calculator checklist PATCH가 require_admin() 뒤에서 정당하게 추가됨.
     ("/api/calculators/{slug}/checklist", "PATCH"),
+    # STEP 4-H-5: Calculator 생성(Mode A) POST가 require_admin() 뒤에서 정당하게 추가됨.
     ("/api/calculators/generate", "POST"),
+    # P0-2: Calculator build/deploy POST가 require_admin() 뒤에서 정당하게 추가됨.
     ("/api/calculators/{slug}/build", "POST"),
     ("/api/calculators/{slug}/deploy", "POST"),
+    # P0-4: Calculator 콘텐츠 생성(SEO/FAQ/본문/이미지/전체) POST 5개가 require_admin()
+    # 뒤에서 정당하게 추가됨.
     ("/api/calculators/{slug}/content/seo", "POST"),
     ("/api/calculators/{slug}/content/faq", "POST"),
     ("/api/calculators/{slug}/content/body", "POST"),
     ("/api/calculators/{slug}/content/image", "POST"),
     ("/api/calculators/{slug}/content/generate", "POST"),
+    # P0-5: Mode B(Contract 기반 생성) POST 4개가 require_admin() 뒤에서 정당하게 추가됨.
     ("/api/calculators/generate/contract", "POST"),
     ("/api/calculators/generate/contract/slug-check", "POST"),
     ("/api/calculators/generate/contract/validate", "POST"),
     ("/api/calculators/generate/contract/{job_id}/save", "POST"),
+    # STEP S1: Human Review Approval POST 2개가 require_admin() 뒤에서 정당하게 추가됨.
     ("/api/calculators/{slug}/review/approve", "POST"),
     ("/api/calculators/{slug}/review/unapprove", "POST"),
+    # STEP S3: 실질 헬스체크(외부 서비스) 재실행 POST가 require_admin() 뒤에서 정당하게 추가됨.
     ("/api/health/external/run", "POST"),
+    # STEP S5: Cost Manager 수동 재개 / Retry Queue 수동 재시도 POST 2개가
+    # require_admin() 뒤에서 정당하게 추가됨.
     ("/api/costs/resume", "POST"),
     ("/api/costs/retry", "POST"),
+    # STEP S6: Retry Queue 수동 제거 POST가 require_admin() 뒤에서 정당하게 추가됨.
     ("/api/costs/remove", "POST"),
+    # STEP S8: Strategy Room 실행 POST가 require_admin() 뒤에서 정당하게 추가됨.
     ("/api/strategy-room/run", "POST"),
+    # STEP S10: Content Sync 수동 실행 POST가 require_admin() 뒤에서 정당하게 추가됨.
     ("/api/scheduler/content-sync/run-once", "POST"),
+    # STEP S11: Dashboard Quick Action 「계산기 생성」 수동 실행 POST가 require_admin()
+    # 뒤에서 정당하게 추가됨(/api/scheduler/calculator/status의 GET과는 별개).
     ("/api/scheduler/calculator/run-once", "POST"),
+    # STEP S12: Dashboard Quick Action 「파이프라인 실행(전량)」 수동 실행 POST가
+    # require_admin() 뒤에서 정당하게 추가됨(/api/scheduler/blog/run-once와는 다른 함수).
     ("/api/scheduler/pipeline/run-once", "POST"),
+    # STEP S13: Dashboard Quick Action 「▶ 실행」(통합 실행) 수동 실행 POST가
+    # require_admin() 뒤에서 정당하게 추가됨(새 pipeline이 아니라 S11/S12 서비스를 재사용하는 dispatcher).
     ("/api/scheduler/integrated/run-once", "POST"),
+    # STEP P2-06: Site Management 생성/Import POST 2개가 require_admin() 뒤에서
+    # 정당하게 추가됨(P2-04의 GET /api/sites 조회와는 별개 endpoint).
     ("/api/sites", "POST"),
     ("/api/sites/import", "POST"),
+    # STEP P2-07: 사이트 기본 정보 수정(PUT)/Override 저장·초기화(POST)가
+    # require_admin() 뒤에서 정당하게 추가됨.
     ("/api/sites/{site_id}", "PUT"),
     ("/api/sites/{site_id}/override", "POST"),
     ("/api/sites/{site_id}/override/reset", "POST"),
+    # STEP P2-08: Activate/Deactivate/Archive/Restore POST 4개가
+    # require_admin() 뒤에서 정당하게 추가됨.
     ("/api/sites/{site_id}/activate", "POST"),
     ("/api/sites/{site_id}/deactivate", "POST"),
     ("/api/sites/{site_id}/archive", "POST"),
     ("/api/sites/{site_id}/restore", "POST"),
+    # STEP P2-09: Hard Delete(DELETE)/Clone(POST)가 require_admin() 뒤에서
+    # 정당하게 추가됨(이 프로젝트 전체에서 처음 등록되는 DELETE).
     ("/api/sites/{site_id}", "DELETE"),
     ("/api/sites/{site_id}/clone", "POST"),
     # CALCMATE-BLOG-PUBLISHING-POLICY-FASTAPI-REACT-CONNECTION-IMPLEMENT-01:
     # Publishing Policy/Auto Publishing PATCH 2개가 require_admin() 뒤에서
-    # 정당하게 추가됨(§WRITE-SURFACE-FIX-01).
+    # 정당하게 추가되어 이제 46개다(§WRITE-SURFACE-FIX-01).
     ("/api/scheduler/publishing-policy", "PATCH"),
     ("/api/scheduler/auto-publishing", "PATCH"),
+    # CALCMATE-MIGRATION-C-TEST-CONTRACT-FIX-02: Streamlit→FastAPI 이관(A 커밋 9b9f979)으로
+    # 추가된 write route 46개 — 전부 require_admin() 뒤에 있음을 확인한 뒤 등록(이제 92개).
+    # AI Assistant / AI Workspace
+    ("/api/assistant/chat", "POST"),
+    ("/api/assistant/files/create", "POST"),
+    ("/api/assistant/files/list", "POST"),
+    ("/api/assistant/files/preview", "POST"),
+    ("/api/assistant/files/read", "POST"),
+    ("/api/assistant/files/write", "POST"),
+    ("/api/assistant/memory", "POST"),
+    ("/api/assistant/tasks", "POST"),
+    ("/api/assistant/tasks/{task_id}", "PATCH"),
+    ("/api/workspace/chat", "POST"),
+    ("/api/workspace/files/create", "POST"),
+    ("/api/workspace/files/preview", "POST"),
+    ("/api/workspace/files/sandbox", "POST"),
+    ("/api/workspace/files/write", "POST"),
+    # App Factory AI 추천 / Contract / Mode A preview / GAP-01·02
+    ("/api/calculators/ai/suggest-formula", "POST"),
+    ("/api/calculators/ai/suggest-idea", "POST"),
+    ("/api/calculators/ai/suggest-mode", "POST"),
+    ("/api/calculators/ai/suggest-spec", "POST"),
+    ("/api/calculators/ai/suggest-tier", "POST"),
+    ("/api/calculators/ai/tier2b-keywords", "POST"),
+    ("/api/calculators/generate/contract/slug-suggest", "POST"),
+    ("/api/calculators/generate/contract/{job_id}/confirm-formula", "POST"),
+    ("/api/calculators/generate/preview", "POST"),
+    ("/api/calculators/generate/preview/{job_id}/discard", "POST"),
+    ("/api/calculators/generate/preview/{job_id}/save", "POST"),
+    ("/api/calculators/{slug}/delete/confirm", "POST"),
+    ("/api/calculators/{slug}/delete/prepare", "POST"),
+    ("/api/calculators/{slug}/status", "POST"),
+    # Scheduler (oneoff / webapp / content-sync 복구 / run-one / planner / topic reconciliation)
+    ("/api/scheduler/blog/oneoff", "POST"),
+    ("/api/scheduler/blog/run-once/oneoff", "POST"),
+    ("/api/scheduler/calculator-webapp/run-once", "POST"),
+    ("/api/scheduler/calculator/config", "PATCH"),
+    ("/api/scheduler/content-sync/resume", "POST"),
+    ("/api/scheduler/content-sync/retry", "POST"),
+    ("/api/scheduler/pipeline/run-one", "POST"),
+    ("/api/scheduler/planner/run-once", "POST"),
+    ("/api/scheduler/topics/{topic_id}/revert-candidate", "POST"),
+    ("/api/scheduler/topics/{topic_id}/wp-check", "POST"),
+    # Settings (계산기 노출 / 운영 설정 / 연결 테스트)
+    ("/api/settings/calculator-display", "PATCH"),
+    ("/api/settings/operations", "PATCH"),
+    ("/api/settings/telegram/test", "POST"),
+    ("/api/settings/wordpress/test", "POST"),
+    # Sites (사이트 공통 페이지 / GAP-03 전체 재빌드)
+    ("/api/sites/pages/deploy", "POST"),
+    ("/api/sites/pages/preview", "POST"),
+    ("/api/sites/pages/save", "POST"),
+    ("/api/sites/rebuild", "POST"),
 })
 # STEP 18-P 조회 3종 외에 이 STEP에서 정당하게 존재하는 Publish/Trash write route.
 KNOWN_PUBLISH_TRASH_WRITE_ROUTES = frozenset({
@@ -77,6 +162,31 @@ KNOWN_PUBLISH_TRASH_WRITE_ROUTES = frozenset({
     ("/api/trash/{article_id}", "POST"),
     ("/api/trash/{article_id}/restore", "POST"),
 })
+
+
+# 운영 dashboard_cache.db / Google Sheets / config·secrets를 읽지 않도록 publish_service가
+# 실제로 쓰는 consumer namespace(api.services.publish_service.cache_read / load_config)만
+# 이 파일 안에서 stub한다. 원본 modules.dashboard_cache.read는 patch하지 않는다.
+FAKE_ROWS = [
+    {"ID": "A1", "최종추천제목": "발행 글", "상태값": "발행완료", "발행일시": "2026-01-01 09:00",
+     "발행 URL": "https://example.test/a1", "wp_post_id": "101"},
+    {"ID": "A2", "최종추천제목": "검수 글", "상태값": "검수대기", "발행일시": "",
+     "발행 URL": "", "wp_post_id": ""},
+    {"ID": "A3", "최종추천제목": "수정 글", "상태값": "수정됨", "발행일시": "2026-01-02 09:00",
+     "발행 URL": "https://example.test/a3", "wp_post_id": "103"},
+    {"ID": "A4", "최종추천제목": "삭제 글", "상태값": "휴지통", "발행일시": "2026-01-03 09:00",
+     "발행 URL": "https://example.test/a4", "wp_post_id": "104"},
+    {"ID": "A5", "최종추천제목": "대기 글", "상태값": "작성중", "발행일시": "",
+     "발행 URL": "", "wp_post_id": ""},
+]
+
+
+@pytest.fixture(autouse=True)
+def _isolate_publish_source(monkeypatch):
+    import api.services.publish_service as publish_service
+    monkeypatch.setattr(publish_service, "load_config", lambda *args, **kwargs: {})
+    monkeypatch.setattr(publish_service, "cache_read",
+                        lambda cfg, table, ttl=120, auto_refresh=True: [dict(r) for r in FAKE_ROWS])
 
 
 def _client():
@@ -124,12 +234,10 @@ def test_get_trash():
 
 
 def test_publish_articles_are_real_db_data_not_fabricated():
-    """실제 DB의 articles 테이블 카운트와 API 응답이 구조적으로 일치하는지 확인
-    (하드코딩된 값이 아니라 실제 데이터를 읽었는지 실증)."""
-    from modules.config_loader import load_config
-    from modules.dashboard_cache import read as cache_read
-
-    rows = cache_read(load_config(), "articles")
+    """데이터 소스(stub된 cache_read가 돌려주는 FAKE_ROWS)의 카운트와 API 응답이 일치하는지
+    확인한다(하드코딩된 값이 아니라 소스 데이터를 그대로 반영하는지 실증). 운영 DB 대신
+    deterministic fake source를 source of truth로 쓴다(테스트 격리)."""
+    rows = FAKE_ROWS
     expected_total = len(rows)
     expected_publish = len([r for r in rows if r.get("상태값") in ("발행완료", "검수대기", "수정됨")])
     expected_trash = len([r for r in rows if r.get("상태값") == "휴지통"])
@@ -165,7 +273,8 @@ def test_publish_or_trash_write_endpoints_are_exactly_the_known_step18r_set():
 
 
 def test_overall_write_surface_is_exactly_five():
-    """STEP 18-R §14에서 확정한 write surface(5개)가 정확히 그대로인지 확인한다."""
+    """write surface가 canonical route inventory(EXPECTED_WRITE_ROUTES, 92개)와 정확히 일치하는지 확인한다
+    (함수명의 "five"는 STEP 18-R 당시 기준의 역사적 이름)."""
     app_ = __import__("api.main", fromlist=["app"]).app
     actual = frozenset(write_routes(app_))
     assert actual == EXPECTED_WRITE_ROUTES, f"write surface가 변경됨: {sorted(actual)}"
