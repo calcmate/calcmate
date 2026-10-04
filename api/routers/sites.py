@@ -42,7 +42,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.auth.dependencies import require_admin
-from api.auth.models import CurrentUser
+from api.auth.models import AuditEvent, CurrentUser
+from api.auth.service import record_audit_event
 from api.dependencies import ok, fail
 from api.services import site_service
 
@@ -89,6 +90,77 @@ class SiteImportRequest(BaseModel):
 @router.post("/import")
 def post_import_sites(body: SiteImportRequest, user: CurrentUser = Depends(require_admin)):
     return ok(site_service.import_sites(body.rows))
+
+
+# CALCMATE-REMAINING-DASHBOARD-KEEP-MIGRATION-01: dashboard.py "⬇️ 사이트
+# Export(JSON)"(1322-1327) 이관. "/{site_id}"보다 먼저 선언해야 "export"가
+# site_id로 캐치되지 않는다.
+@router.get("/export")
+def get_export_sites(user: CurrentUser = Depends(require_admin)):
+    return ok({"sites": site_service.export_sites()})
+
+
+# ── SITE-PAGE-DEPLOYMENT-02: 사이트 공통 페이지 미리보기/로컬 저장/배포 ──────────
+# dashboard.py "🌐 사이트 페이지 배포"(1881-1930) 이관. "/{site_id}"보다 먼저 선언한다.
+# 배포는 GitHub Contents API가 아니라 로컬 Git(9개 파일만 commit → in-sync일 때만 push).
+@router.post("/pages/preview")
+def post_site_pages_preview(user: CurrentUser = Depends(require_admin)):
+    from api.services import site_pages_service
+    try:
+        return ok(site_pages_service.preview_site_pages())
+    except site_pages_service.SitePagesBuildError as e:
+        return fail("SITE_PAGES_BUILD_FAILED", str(e))
+
+
+@router.post("/pages/save")
+def post_site_pages_save(user: CurrentUser = Depends(require_admin)):
+    from api.services import site_pages_service
+    try:
+        return ok(site_pages_service.save_site_pages())
+    except site_pages_service.SitePagesBuildError as e:
+        return fail("SITE_PAGES_BUILD_FAILED", str(e))
+
+
+@router.post("/pages/deploy")
+def post_site_pages_deploy(user: CurrentUser = Depends(require_admin)):
+    from api.services import site_pages_service
+    try:
+        result = site_pages_service.deploy_site_pages()
+    except site_pages_service.SitePagesBuildError as e:
+        return fail("SITE_PAGES_BUILD_FAILED", str(e))
+    except site_pages_service.SitePagesBusy as e:
+        return fail("LOCK_CONFLICT", str(e))
+    record_audit_event(AuditEvent(
+        actor_id=user.id, actor_role=user.role.value, action="site_pages_deploy",
+        resource="site_pages", resource_id="site", result="success" if result.get("ok") else "blocked",
+    ))
+    return ok(result)
+
+
+# ── GAP-01-03-IMPLEMENT-01 (GAP-03): 전체 정적 사이트 재빌드 ─────────────────────
+# dashboard.py "⚙️ Build — {계산기}"(1809-1880) 이관. 계산기 1개용 POST /api/calculators/
+# {slug}/build와 별개. BUILD만 하고 commit/push/GitHub/WP/Telegram은 하지 않는다.
+class SiteRebuildRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    slug: str = Field(min_length=1, max_length=128)
+
+
+@router.post("/rebuild")
+def post_site_rebuild(body: SiteRebuildRequest, user: CurrentUser = Depends(require_admin)):
+    from api.services import site_rebuild_service as svc
+    try:
+        result = svc.rebuild_site(body.slug)
+    except svc.SiteRebuildBusy as e:
+        res, outcome = fail("LOCK_CONFLICT", str(e)), "blocked"
+    except svc.SiteRebuildError as e:
+        res, outcome = fail(e.code, str(e)), "failed" if e.code == "TIMEOUT" else "blocked"
+    else:
+        res, outcome = ok(result), "success" if result.get("ok") else "blocked"
+    record_audit_event(AuditEvent(
+        actor_id=user.id, actor_role=user.role.value, action="site_rebuild",
+        resource="site", resource_id=body.slug, result=outcome,
+    ))
+    return res
 
 
 # ── STEP P2-07: 사이트 기본 정보 수정 + Site Settings Override ──────────────

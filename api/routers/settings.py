@@ -243,6 +243,128 @@ def patch_calculator_display_settings(
     return ok(result)
 
 
+# CALCMATE-REMAINING-DASHBOARD-KEEP-MIGRATION-01: dashboard.py "🔧 설정"의 블로그
+# 파이프라인 모델 매칭(3101-3133)/운영 설정(3216-3231)/TELEGRAM_EVENTS(3252-3261)/
+# 텔레그램 테스트 전송(3241-3251) 이관. 허용값 검증은 operations_settings_service가
+# 원본 옵션 그대로 수행한다(AI_ROLES와는 별개의 flat 키).
+_OPERATIONS_FIELD_TO_CONFIG_KEY = {
+    "orchestrator_provider": "ORCHESTRATOR_PROVIDER",
+    "model_orchestrator": "MODEL_ORCHESTRATOR",
+    "planner_provider": "PLANNER_PROVIDER",
+    "model_planner": "MODEL_PLANNER",
+    "writer_provider": "WRITER_PROVIDER",
+    "model_writer": "MODEL_WRITER",
+    "editor_provider": "EDITOR_PROVIDER",
+    "model_editor": "MODEL_EDITOR",
+    "model_cleaner": "MODEL_CLEANER",
+    "model_editor_fallback": "MODEL_EDITOR_FALLBACK",
+    "adsense_mode": "ADSENSE_MODE",
+    "dlq_threshold": "DLQ_THRESHOLD",
+    "auto_topic_expansion": "AUTO_TOPIC_EXPANSION",
+    "enable_strategy_room": "ENABLE_STRATEGY_ROOM",
+    "telegram_events": "TELEGRAM_EVENTS",
+}
+
+
+class OperationsSettingsUpdate(BaseModel):
+    """부분 업데이트(PATCH) 전용. 미전송/None 필드는 변경하지 않는다.
+    허용하지 않은 필드는 422로 거부한다(extra="forbid")."""
+    model_config = ConfigDict(extra="forbid")
+
+    orchestrator_provider: Literal[_AI_PROVIDERS] | None = None
+    model_orchestrator: str | None = None
+    planner_provider: Literal[_AI_PROVIDERS] | None = None
+    model_planner: str | None = None
+    writer_provider: Literal[_AI_PROVIDERS] | None = None
+    model_writer: str | None = None
+    editor_provider: Literal[_AI_PROVIDERS] | None = None
+    model_editor: str | None = None
+    model_cleaner: str | None = None
+    model_editor_fallback: str | None = None
+    adsense_mode: Literal["pre", "post"] | None = None
+    dlq_threshold: int | None = Field(default=None, ge=1, le=10)
+    auto_topic_expansion: bool | None = None
+    enable_strategy_room: bool | None = None
+    telegram_events: dict[str, bool] | None = None
+
+
+@router.get("/operations")
+def get_operations_settings(user: CurrentUser = Depends(require_admin)):
+    from api.services import operations_settings_service
+    return ok(operations_settings_service.get_operations_settings())
+
+
+@router.patch("/operations")
+def patch_operations_settings(
+    body: OperationsSettingsUpdate,
+    user: CurrentUser = Depends(require_admin),
+):
+    from api.services import operations_settings_service
+    data = body.model_dump(exclude_unset=True, exclude_none=True)
+    updates = {_OPERATIONS_FIELD_TO_CONFIG_KEY[field]: value for field, value in data.items()}
+    try:
+        result = operations_settings_service.patch_operations_settings(updates)
+    except ValueError as e:
+        return fail("VALIDATION_ERROR", str(e))
+    record_audit_event(AuditEvent(
+        actor_id=user.id, actor_role=user.role.value, action="settings_patch_operations",
+        resource="settings", resource_id="operations", result="success",
+    ))
+    return ok(result)
+
+
+class TelegramTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+
+
+@router.post("/telegram/test")
+def post_telegram_test(
+    body: TelegramTestRequest,
+    user: CurrentUser = Depends(require_admin),
+):
+    from api.services import operations_settings_service
+    try:
+        result = operations_settings_service.send_telegram_test(
+            body.telegram_bot_token, body.telegram_chat_id)
+    except ValueError as e:
+        return fail("TELEGRAM_NOT_CONFIGURED", str(e))
+    record_audit_event(AuditEvent(
+        actor_id=user.id, actor_role=user.role.value, action="settings_telegram_test",
+        resource="settings", resource_id="telegram", result="success",
+    ))
+    return ok(result)
+
+
+class WordPressTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    wordpress_url: str | None = None
+    wordpress_username: str | None = None
+    wordpress_app_password: str | None = None
+
+
+@router.post("/wordpress/test")
+def post_wordpress_test(
+    body: WordPressTestRequest,
+    user: CurrentUser = Depends(require_admin),
+):
+    from api.services import operations_settings_service as ops
+    try:
+        result = ops.check_wordpress_connection(
+            body.wordpress_url, body.wordpress_username, body.wordpress_app_password)
+    except ops.WordPressTestNotConfigured as e:
+        return fail("WORDPRESS_NOT_CONFIGURED", str(e))
+    except ops.WordPressTestInvalidUrl as e:
+        return fail("VALIDATION_ERROR", str(e))
+    record_audit_event(AuditEvent(
+        actor_id=user.id, actor_role=user.role.value, action="settings_wordpress_test",
+        resource="settings", resource_id="wordpress",
+        result="success" if result.get("ok") else "failed",
+    ))
+    return ok(result)
+
+
 @router.get("/{section}")
 def get_settings_section(section: str):
     try:

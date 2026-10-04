@@ -14,6 +14,10 @@ class SiteManager:
     def get_active_sites(self) -> list[dict]:
         return self._repo.get_active_sites()
 
+    def get_all_sites(self) -> list[dict]:
+        """전체 site(상태 무관, 저장소 순서 그대로) — site_wizard.list_sites()와 동일한 조회."""
+        return self._repo.get_all()
+
     def get_by_id(self, site_id: str) -> dict | None:
         return self._repo.get_by_id(site_id)
 

@@ -230,14 +230,20 @@ def _context_for(target: str) -> str:
 
 
 # ── 채팅 ──────────────────────────────────────────────────────────
-def chat(cfg: dict, model_label: str, messages: list, attach_context: bool = True) -> tuple:
+def chat(cfg: dict, model_label: str, messages: list, attach_context: bool = True,
+         context: str = None) -> tuple:
+    """context를 주면(HTTP API의 안전 context) _context_for() 대신 그 문자열을 쓴다.
+    주지 않으면 기존 동작 그대로(dashboard.py 호출부 무변경)."""
     provider_name, model = CHAT_MODELS.get(model_label, CHAT_MODELS["GPT (CEO/전략)"])
     provider = build_provider(provider_name, cfg)
     system = ("너는 SalaryMate 운영비서다. 프로젝트 분석/코드 분석/파일 수정 제안/전략 토론/개선 제안을 한다. "
               "한국어로 간결·정확하게. 파일 수정을 제안할 때는 대상 경로와 전체 새 내용을 명확히 제시하라. "
               "직접 삭제/시스템 명령은 제안하지 마라.")
     last_user = messages[-1]["content"] if messages else ""
-    ctx = _context_for(last_user) if attach_context else ""
+    if context is not None:
+        ctx = context
+    else:
+        ctx = _context_for(last_user) if attach_context else ""
     convo = (f"[컨텍스트]\n{ctx}\n\n" if ctx else "") + \
             "\n".join(f"[{m['role']}] {m['content']}" for m in messages[-10:])
     text, tokens = provider.chat(system, convo, model, max_tokens=2500)

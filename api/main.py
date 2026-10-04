@@ -5,7 +5,11 @@ React Dashboard
 FastAPI
   ├─ API
   ├─ Blog Scheduler Worker
-  └─ One-off Scheduler Worker
+  ├─ One-off Scheduler Worker
+  ├─ Content Sync Worker
+  ├─ Publishing Planner Worker
+  ├─ WP Blog Sync Worker
+  └─ Calculator WebApp Scheduler Worker
 """
 from contextlib import asynccontextmanager
 
@@ -25,6 +29,9 @@ from api.routers.blog import router as blog_router
 from api.routers.strategy_room import router as strategy_room_router
 from api.routers.workboard import router as workboard_router
 from api.routers.sites import router as sites_router
+from api.routers.topic_reconciliation import router as topic_reconciliation_router
+from api.routers.assistant import router as assistant_router
+from api.routers.workspace import router as workspace_router
 from api.services.worker_manager import get_worker_manager
 
 
@@ -39,9 +46,24 @@ async def lifespan(app: FastAPI):
         get_worker_manager().start_worker("blog")
 
     # 3. One-off Scheduler worker 시작 (BLOG_SCHEDULE.enabled OR AUTO_PUBLISHING.enabled)
-    from api.services.worker_manager import _worker_enabled as _oneoff_enabled
-    if _oneoff_enabled("oneoff"):
+    if _worker_enabled("oneoff"):
         get_worker_manager().start_worker("oneoff")
+
+    # 4. Content Sync Worker 시작 (CONTENT_SYNC.enabled AND FASTAPI_WORKER_MODE=1)
+    if _worker_enabled("content_sync"):
+        get_worker_manager().start_worker("content_sync")
+
+    # 5. Publishing Planner Worker 시작 (AUTO_PUBLISHING.enabled AND FASTAPI_WORKER_MODE=1)
+    if _worker_enabled("publishing_planner"):
+        get_worker_manager().start_worker("publishing_planner")
+
+    # 6. WP Blog Sync Worker 시작 (WP_BLOG_SYNC.enabled AND FASTAPI_WORKER_MODE=1)
+    if _worker_enabled("wp_blog_sync"):
+        get_worker_manager().start_worker("wp_blog_sync")
+
+    # 7. Calculator WebApp Scheduler Worker 시작 (CALC_WEBAPP_SCHEDULE.enabled AND FASTAPI_WORKER_MODE=1)
+    if _worker_enabled("calc_webapp"):
+        get_worker_manager().start_worker("calc_webapp")
 
     try:
         yield
@@ -71,3 +93,6 @@ app.include_router(blog_router)
 app.include_router(strategy_room_router)
 app.include_router(workboard_router)
 app.include_router(sites_router)
+app.include_router(topic_reconciliation_router)
+app.include_router(assistant_router)
+app.include_router(workspace_router)

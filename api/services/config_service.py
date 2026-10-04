@@ -51,6 +51,7 @@ ALLOWED_SECTIONS = frozenset({
     "CONTENT_SYNC",
     "PUBLISHING_POLICY",
     "AUTO_PUBLISHING",
+    "WP_BLOG_SYNC",
 })
 
 _SECRET_KEY_SUFFIXES = ("_KEY", "_TOKEN", "_PASSWORD", "_SECRET")
@@ -126,6 +127,11 @@ CALCULATOR_DISPLAY_FIELDS = (
 
 _SITE_MODE_CHOICES = ("pre_adsense", "adsense", "cpa", "full")
 _RESULT_EXPORT_TYPE_CHOICES = ("png", "pdf", "both", "none")
+
+# Calculator WebApp Scheduler 전용 (CALCMATE-CALCULATOR-SCHEDULER-FASTAPI-WORKER-IMPLEMENT-01)
+# CALC_WEBAPP_SCHEDULE 섹션: enabled, mode, targets, poll_seconds
+_CALC_WEBAPP_MODES = ("qa_only", "qa_deploy")
+
 
 class ConfigSectionNotAllowed(Exception):
     """allowlist에 없는 section을 요청한 경우."""
@@ -327,6 +333,57 @@ class ConfigService:
                 text = yaml.dump(raw, allow_unicode=True, default_flow_style=False, sort_keys=False)
                 self._atomic_write(text)
             return self.get_calculator_display_settings()
+
+    def patch_calc_webapp_schedule(self, enabled: bool = None, mode: str = None, targets: list = None, poll_seconds: int = None) -> dict:
+        """CALC_WEBAPP_SCHEDULE 블록만 정규식으로 치환한다. 파일의 다른 부분(주석 포함)은
+        건드리지 않는다. 저장 전 값 검증을 통과하지 못하면 파일을 쓰지 않는다.
+
+        중요: mode가 "qa_deploy"라도 FastAPI 자동 Worker는 GitHub Deploy/Registry Publish를
+        실행하지 않는다. 자동 Worker는 Build/QA/_site만 담당한다. Deploy/Registry는
+        별도 명시적 endpoint(/calculator/{id}/deploy, /calculator/{id}/publish)로 분리한다."""
+        with _CONFIG_WRITE_LOCK:
+            # Validate only provided fields
+            if enabled is not None and not isinstance(enabled, bool):
+                raise ValueError("enabled must be a boolean")
+            if mode is not None and mode not in _CALC_WEBAPP_MODES:
+                raise ValueError(f"mode must be one of {_CALC_WEBAPP_MODES}")
+            if targets is not None:
+                if not isinstance(targets, list):
+                    raise ValueError("targets must be a list")
+                for t in targets:
+                    if not isinstance(t, str) or not t.strip():
+                        raise ValueError("each target must be a non-empty string")
+            if poll_seconds is not None:
+                if not isinstance(poll_seconds, int) or poll_seconds < 1:
+                    raise ValueError("poll_seconds must be a positive integer")
+
+            # Load current section to preserve unspecified fields
+            current = self.get_section("CALC_WEBAPP_SCHEDULE")
+            enabled = current.get("enabled", False) if enabled is None else enabled
+            mode = current.get("mode", "qa_only") if mode is None else mode
+            targets = current.get("targets", []) if targets is None else targets
+            poll_seconds = current.get("poll_seconds", 30) if poll_seconds is None else poll_seconds
+
+            block_lines = [
+                "CALC_WEBAPP_SCHEDULE:",
+                f"  enabled: {'true' if enabled else 'false'}",
+                f"  mode: {mode}",
+                "  targets:",
+            ]
+            for target in targets:
+                block_lines.append(f'  - "{target}"')
+            block_lines.append(f"  poll_seconds: {poll_seconds}")
+            new_block = "\n".join(block_lines) + "\n"
+
+            text = self._config_path.read_text(encoding="utf-8")
+            pattern = re.compile(r"^CALC_WEBAPP_SCHEDULE:\n(?:[ \t].*\n?)*", re.MULTILINE)
+            if pattern.search(text):
+                new_text = pattern.sub(lambda _m: new_block, text, count=1)
+            else:
+                new_text = text.rstrip("\n") + "\n\n" + new_block
+
+            self._atomic_write(new_text)
+            return self.get_section("CALC_WEBAPP_SCHEDULE")
 
     def _atomic_write(self, text: str):
         tmp_path = self._config_path.with_name(self._config_path.name + ".tmp")

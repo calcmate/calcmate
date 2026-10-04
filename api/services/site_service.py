@@ -261,6 +261,25 @@ def get_sites() -> list:
     return [_project(repo, row) for row in repo.get_all()]
 
 
+_EXPORT_EXCLUDED_SUFFIXES = ("password", "token", "secret", "_key")
+
+
+def export_sites() -> list:
+    """dashboard.py "⬇️ 사이트 Export(JSON)"(1322-1327)과 동일하게 sites 원본 row
+    전체(SW.list_sites() = SiteRepository.get_all())를 반환한다 — import_sites()가
+    읽는 site_tags/wordpress_url까지 포함되어 Export→Import 왕복이 원본과 같다.
+    WordPress 자격증명은 원래 secrets.yaml(wordpress_profiles)에만 있고 row에는
+    wordpress_profile_id(참조 id)만 있다. 그래도 이름이 password/token/secret/_key로
+    끝나는 컬럼은 방어적으로 제외한다."""
+    cfg = load_config()
+    repo = SiteRepository(get_db_adapter(cfg), cfg)
+    return [
+        {k: v for k, v in row.items()
+         if not str(k).lower().endswith(_EXPORT_EXCLUDED_SUFFIXES)}
+        for row in repo.get_all()
+    ]
+
+
 def _project_detail(repo: SiteRepository, row: dict) -> dict:
     """_project()의 목록용 shape + Override 편집에 필요한 12개 필드. GET
     /api/sites/{site_id}(P2-07 신규, 조회 전용) 전용 — 목록 응답(get_sites())의

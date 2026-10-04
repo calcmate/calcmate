@@ -67,6 +67,186 @@ def get_calculator_generate_job(
         return fail("NOT_FOUND", f"generation job not found: {job_id}")
 
 
+# ── SMALL-GAPS-02: Mode A 생성 → 검토 → 저장/폐기(dashboard.py "🏭 자동 생성" 흐름).
+# 기존 POST /generate(생성+저장 일괄)는 변경하지 않는다. 진행 상태 조회는 같은 Job
+# store를 쓰는 GET /generate/{job_id}를 그대로 사용한다.
+class CalculatorPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1)
+    category: str = ""
+    description: str = ""
+    tier: int = Field(default=2, ge=1, le=2)
+
+
+@router.post("/generate/preview")
+def post_calculator_generate_preview(
+    body: CalculatorPreviewRequest,
+    user: CurrentUser = Depends(require_admin),
+):
+    try:
+        result = calculator_service.submit_calculator_preview_generation(
+            body.name, body.category, body.description, body.tier,
+        )
+    except calculator_service.CalculatorGenerateBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    record_audit_event(AuditEvent(
+        actor_id=user.id, actor_role=user.role.value, action="calculator_preview_submit",
+        resource="calculator", resource_id=result.get("job_id", ""), result="success",
+    ))
+    return ok(result)
+
+
+class CalculatorPreviewSaveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    slug: str = Field(min_length=1, pattern=r"^[a-z0-9][a-z0-9-]*$")
+
+
+@router.post("/generate/preview/{job_id}/save")
+def post_calculator_preview_save(
+    job_id: str,
+    body: CalculatorPreviewSaveRequest,
+    user: CurrentUser = Depends(require_admin),
+):
+    try:
+        result = calculator_service.save_calculator_preview(job_id, body.slug)
+    except calculator_service.CalculatorNotFound:
+        return fail("NOT_FOUND", f"generation job not found: {job_id}")
+    except calculator_service.CalculatorPreviewError as e:
+        return fail("PREVIEW_STATE_INVALID", str(e))
+
+    record_audit_event(AuditEvent(
+        actor_id=user.id, actor_role=user.role.value, action="calculator_preview_save",
+        resource="calculator", resource_id=body.slug,
+        result="success" if result.get("ok") else "blocked",
+    ))
+    return ok(result)
+
+
+@router.post("/generate/preview/{job_id}/discard")
+def post_calculator_preview_discard(
+    job_id: str,
+    user: CurrentUser = Depends(require_admin),
+):
+    try:
+        result = calculator_service.discard_calculator_preview(job_id)
+    except calculator_service.CalculatorNotFound:
+        return fail("NOT_FOUND", f"generation job not found: {job_id}")
+    except calculator_service.CalculatorPreviewError as e:
+        return fail("PREVIEW_STATE_INVALID", str(e))
+
+    record_audit_event(AuditEvent(
+        actor_id=user.id, actor_role=user.role.value, action="calculator_preview_discard",
+        resource="calculator", resource_id=job_id, result="success",
+    ))
+    return ok(result)
+
+
+# ── APP-FACTORY-02: App Factory AI 추천(dashboard.py L1940-2376) ──────────────
+# 추천은 표시용이며 생성/저장/배포를 일으키지 않는다. AI 비용이 발생하므로 기존
+# App Factory endpoint와 같이 전부 require_admin. 실패 시 예외 원문은 노출하지 않는다.
+class AiIdeaRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    keyword: str | None = None
+
+
+class AiModeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1)
+    category: str = ""
+    description: str = ""
+
+
+class AiTierRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1)
+    description: str = ""
+
+
+class AiTier2bRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = ""
+    description: str = ""
+
+
+class AiSpecRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1)
+    category: str = ""
+    description: str = ""
+    tier: str = Field(default="Tier2-A", pattern=r"^(Tier1|Tier2-A|Tier2-B)$")
+
+
+class AiFormulaRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = ""
+    category: str = ""
+    description: str = ""
+    input_fields: list[str] = []
+    output_fields: list[str] = []
+    legal_refs: list[str] = []
+    slug: str | None = None
+
+
+def _ai_audit(user: CurrentUser, action: str, result: str = "success") -> None:
+    record_audit_event(AuditEvent(
+        actor_id=user.id, actor_role=user.role.value, action=action,
+        resource="calculator", resource_id="app_factory_ai", result=result,
+    ))
+
+
+@router.post("/ai/suggest-idea")
+def post_ai_suggest_idea(body: AiIdeaRequest, user: CurrentUser = Depends(require_admin)):
+    try:
+        result = calculator_service.ai_suggest_idea(body.keyword or "")
+    except calculator_service.CalculatorAiSuggestError as e:
+        _ai_audit(user, "calculator_ai_suggest_idea", "failed")
+        return fail("AI_SUGGEST_FAILED", str(e))
+    _ai_audit(user, "calculator_ai_suggest_idea")
+    return ok(result)
+
+
+@router.post("/ai/suggest-mode")
+def post_ai_suggest_mode(body: AiModeRequest, user: CurrentUser = Depends(require_admin)):
+    result = calculator_service.ai_suggest_mode(body.name, body.category, body.description)
+    _ai_audit(user, "calculator_ai_suggest_mode")
+    return ok(result)
+
+
+@router.post("/ai/suggest-tier")
+def post_ai_suggest_tier(body: AiTierRequest, user: CurrentUser = Depends(require_admin)):
+    result = calculator_service.ai_suggest_tier(body.name, body.description)
+    _ai_audit(user, "calculator_ai_suggest_tier")
+    return ok(result)
+
+
+@router.post("/ai/tier2b-keywords")
+def post_ai_tier2b_keywords(body: AiTier2bRequest, user: CurrentUser = Depends(require_admin)):
+    # 규칙 기반(AI 호출 없음). 키워드 목록은 서버(review_center.TIER2B_KEYWORDS)에만 둔다.
+    return ok(calculator_service.detect_tier2b(body.name, body.description))
+
+
+@router.post("/ai/suggest-spec")
+def post_ai_suggest_spec(body: AiSpecRequest, user: CurrentUser = Depends(require_admin)):
+    try:
+        result = calculator_service.ai_suggest_spec(body.name, body.category, body.description, body.tier)
+    except calculator_service.CalculatorAiSuggestError as e:
+        _ai_audit(user, "calculator_ai_suggest_spec", "failed")
+        return fail("AI_SUGGEST_FAILED", str(e))
+    _ai_audit(user, "calculator_ai_suggest_spec")
+    return ok(result)
+
+
+@router.post("/ai/suggest-formula")
+def post_ai_suggest_formula(body: AiFormulaRequest, user: CurrentUser = Depends(require_admin)):
+    result = calculator_service.ai_suggest_formula(
+        body.name, body.category, body.description, body.input_fields, body.output_fields,
+        body.legal_refs, body.slug,
+    )
+    _ai_audit(user, "calculator_ai_suggest_formula", "success" if result.get("success") else "failed")
+    return ok(result)
+
+
 # ── P0-5: Mode B(Contract 기반 생성) — /generate/contract* 는 더 구체적인 경로이므로
 # /generate/{job_id}(2-segment)와 세그먼트 수가 달라 실제로 충돌하지 않지만, 파일
 # 전체의 기존 관례(구체적 정적 경로를 먼저 등록)를 따라 이 블록도 /{slug} 계열보다
@@ -186,6 +366,43 @@ def post_contract_save(
     record_audit_event(AuditEvent(
         actor_id=user.id, actor_role=user.role.value, action="calculator_contract_save",
         resource="calculator", resource_id=body.slug,
+        result="success" if result.get("ok") else "blocked",
+    ))
+    return ok(result)
+
+
+# ── APP-FACTORY-02: Mode B 확정 slug 자동 제안 / Formula 운영자 확정 ──────────
+class ContractSlugSuggestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = ""
+
+
+@router.post("/generate/contract/slug-suggest")
+def post_contract_slug_suggest(
+    body: ContractSlugSuggestRequest,
+    user: CurrentUser = Depends(require_admin),
+):
+    # dashboard.py L2106-2109와 동일한 generate_slug()(결정적, AI 없음). 중복 확인은
+    # 기존 /generate/contract/slug-check를 그대로 쓴다.
+    return ok(calculator_service.suggest_contract_slug(body.name))
+
+
+@router.post("/generate/contract/{job_id}/confirm-formula")
+def post_contract_confirm_formula(
+    job_id: str,
+    user: CurrentUser = Depends(require_admin),
+):
+    # body 없음 — 서버가 job에 저장된 Contract formula를 다시 검증해 상태를 결정한다.
+    try:
+        result = calculator_service.confirm_contract_formula(job_id)
+    except calculator_service.CalculatorNotFound:
+        return fail("NOT_FOUND", f"generation job not found: {job_id}")
+    except calculator_service.ContractFormulaConfirmError as e:
+        return fail("CONTRACT_STATE_INVALID", str(e))
+
+    record_audit_event(AuditEvent(
+        actor_id=user.id, actor_role=user.role.value, action="calculator_contract_formula_confirm",
+        resource="calculator", resource_id=job_id,
         result="success" if result.get("ok") else "blocked",
     ))
     return ok(result)
@@ -481,3 +698,79 @@ def post_calculator_content_generate(slug: str, user: CurrentUser = Depends(requ
     except calculator_service.CalculatorNotFound:
         raise HTTPException(status_code=404, detail=f"calculator not found: {slug}")
     return _content_audit_and_ok(user, slug, "calculator_content_full_generate", result)
+
+
+# ── CALCMATE-STREAMLIT-REMAINING-MIGRATION-GAP-01-03-IMPLEMENT-01 ─────────────
+# GAP-01 상태토글 / GAP-02 삭제(2단계: 서버 발급 토큰 → slug 재입력 확인). 전부 require_admin.
+# 업무 오류는 HTTP 200 + fail(code), 예상 밖 예외는 500(내용 비노출).
+
+class CalculatorStatusRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: str = Field(min_length=1, max_length=16)
+
+
+class CalculatorDeleteConfirmRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token: str = Field(min_length=1, max_length=128)
+    confirm_slug: str = Field(min_length=1, max_length=128)
+
+
+def _calc_audit(user: CurrentUser, action: str, slug: str, result: str) -> None:
+    record_audit_event(AuditEvent(
+        actor_id=user.id, actor_role=user.role.value, action=action,
+        resource="calculator", resource_id=slug, result=result,
+    ))
+
+
+@router.post("/{slug}/status")
+def post_calculator_status(
+    slug: str,
+    body: CalculatorStatusRequest,
+    user: CurrentUser = Depends(require_admin),
+):
+    try:
+        result = calculator_service.set_calculator_status(slug, body.status)
+    except calculator_service.CalculatorValidationError as e:
+        return fail("VALIDATION_ERROR", str(e))
+    except calculator_service.CalculatorNotFound:
+        return fail("NOT_FOUND", "계산기를 찾을 수 없습니다.")
+    _calc_audit(user, "calculator_status_set", slug, "success")
+    return ok(result)
+
+
+@router.post("/{slug}/delete/prepare")
+def post_calculator_delete_prepare(
+    slug: str,
+    user: CurrentUser = Depends(require_admin),
+):
+    try:
+        result = calculator_service.prepare_calculator_delete(slug, user.id)
+    except calculator_service.CalculatorValidationError as e:
+        return fail("VALIDATION_ERROR", str(e))
+    except calculator_service.CalculatorNotFound:
+        return fail("NOT_FOUND", "계산기를 찾을 수 없습니다.")
+    except calculator_service.CalculatorDeleteError as e:
+        _calc_audit(user, "calculator_delete_prepare", slug, "blocked")
+        return fail(e.code, str(e))
+    _calc_audit(user, "calculator_delete_prepare", slug, "success")
+    return ok(result)
+
+
+@router.post("/{slug}/delete/confirm")
+def post_calculator_delete_confirm(
+    slug: str,
+    body: CalculatorDeleteConfirmRequest,
+    user: CurrentUser = Depends(require_admin),
+):
+    try:
+        result = calculator_service.confirm_calculator_delete(slug, body.token, body.confirm_slug, user.id)
+    except calculator_service.CalculatorValidationError as e:
+        return fail("VALIDATION_ERROR", str(e))
+    except calculator_service.CalculatorNotFound:
+        _calc_audit(user, "calculator_delete", slug, "not_found")
+        return fail("NOT_FOUND", "계산기를 찾을 수 없습니다.")
+    except calculator_service.CalculatorDeleteError as e:
+        _calc_audit(user, "calculator_delete", slug, "failed" if e.code in ("DELETE_FAILED", "DELETE_VERIFY_FAILED") else "blocked")
+        return fail(e.code, str(e))
+    _calc_audit(user, "calculator_delete", slug, "success")
+    return ok(result)

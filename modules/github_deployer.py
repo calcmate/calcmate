@@ -404,3 +404,208 @@ def calculator_public_url(cfg: dict, slug: str) -> str:
             or host.endswith("github.io") or "salarymate" in host):
         raise ValueError(f"published_url 계산 불가 — SITE_URL이 공개 사이트 루트가 아님: {base!r}")
     return f"{base}/{slug}/"
+
+
+# ── 사이트 공통 페이지 Deploy: 로컬 Git 경로 (SITE-PAGE-DEPLOYMENT-02) ───────────
+# dashboard.py "🚀 사이트 페이지 배포"는 Contents API로 파일마다 원격 commit을 만들었다
+# (create_repo/_put_file×9/_enable_pages). 그 방식은 이관하지 않고, 계산기 Deploy와 같은
+# 로컬 Git 경로(9개 파일만 stage → 1회 commit → local HEAD == origin/master일 때만 push)를
+# 쓴다. _RESERVED_SITE_ENTRIES/_validate_slug/_plan_slug_deploy(계산기 경로)는 그대로이며,
+# 이 경로만 아래 고정 목록(site_generator.generate_all()의 9개 산출물)을 명시적으로 허용한다.
+# CNAME은 생성 대상이 아니므로 만들지도·stage하지도 않는다(변경돼 있으면 배포 차단).
+SITE_PAGE_FILES = (
+    "index.html", "site.css", "about/index.html", "privacy/index.html",
+    "terms/index.html", "contact/index.html", "404.html", "sitemap.xml", "robots.txt",
+)
+# 사이트 공통 영역에서 "배포 대상 외 변경"을 감지할 범위(계산기 <slug>/ 디렉터리는 제외).
+_SITE_PAGE_WATCH = ("index.html", "site.css", "404.html", "sitemap.xml", "robots.txt", "CNAME",
+                    "about", "privacy", "terms", "contact")
+SITE_PAGES_COMMIT_MESSAGE = "deploy: update site pages"
+
+
+def _site_pages_result(message: str, commit=None, files=None, committed=False, pushed=False) -> dict:
+    return {"message": message, "commit": commit, "files": list(files or []),
+            "committed": committed, "pushed": pushed}
+
+
+def _plan_site_pages_deploy(root: str, files: dict, branch: str = _BRANCH,
+                            dry_run: bool = False) -> dict:
+    """사이트 공통 페이지 배포 전 검증 + 예상 결과. 저장소/원격에 쓰지 않는다
+    (실배포 모드의 fetch는 remote-tracking ref 갱신만). 규칙은 _plan_slug_deploy와 같다:
+    dry_run=False면 첫 차단 사유에서 _Blocked, dry_run=True면 모든 사유를 모아 반환."""
+    from pathlib import Path
+
+    plan = {
+        "status": "dry_run" if dry_run else "checked", "dry_run": dry_run,
+        "branch": branch, "files": [], "file_count": 0, "changed_files": [],
+        "commit_message": SITE_PAGES_COMMIT_MESSAGE,
+        "commit_would_be_required": False, "push_would_be_required": False,
+        "local_head": None, "remote_head": None, "remote_state": None,
+        "deploy_allowed": False, "blocked_reason": None, "blockers": [],
+    }
+
+    def block(msg: str):
+        plan["blockers"].append(msg)
+        if not dry_run:
+            raise _Blocked(msg)
+
+    def done() -> dict:
+        plan["deploy_allowed"] = not plan["blockers"]
+        plan["blocked_reason"] = plan["blockers"][0] if plan["blockers"] else None
+        return plan
+
+    names = set(files or {})
+    missing = sorted(set(SITE_PAGE_FILES) - names)
+    extra = sorted(names - set(SITE_PAGE_FILES))
+    if missing:
+        block(f"필수 사이트 페이지 누락: {missing}")
+    if extra:
+        block(f"허용되지 않는 사이트 페이지: {extra}")
+    empty = sorted(n for n in names & set(SITE_PAGE_FILES)
+                   if not isinstance(files[n], str) or not files[n])
+    if empty:
+        block(f"빈 사이트 페이지: {empty}")
+    if plan["blockers"]:
+        return done()
+
+    top = _git(root, ["rev-parse", "--show-toplevel"])
+    if top.returncode != 0:
+        block("git 저장소가 아님")
+        return done()
+    repo_root = Path(top.stdout.strip()).resolve()
+    root = str(repo_root)
+    plan["_root"] = root
+    site_root = (repo_root / _SITE_REL).resolve()
+
+    deploy_rel = []
+    for name in SITE_PAGE_FILES:
+        p = (site_root / name).resolve()
+        if site_root not in p.parents or not p.is_file() or p.read_text(encoding="utf-8") != files[name]:
+            block(f"스냅샷 불일치: {_SITE_REL}/{name}")
+            continue
+        deploy_rel.append(f"{_SITE_REL}/{name}")
+    plan["files"], plan["file_count"] = deploy_rel, len(deploy_rel)
+
+    if _git(root, ["symbolic-ref", "--short", "HEAD"]).stdout.strip() != branch:
+        block(f"현재 브랜치가 {branch}가 아님")
+    staged = _git(root, ["diff", "--cached", "--name-only"])
+    if staged.returncode != 0 or staged.stdout.strip():
+        block("index에 이미 staged 변경이 있음(index_not_clean)")
+
+    head = _rev(root, "HEAD")
+    if dry_run:
+        r = _git(root, ["ls-remote", "origin", f"refs/heads/{branch}"])
+        remote = r.stdout.split()[0] if r.returncode == 0 and r.stdout.strip() else None
+        if remote is None:
+            block(f"git ls-remote 실패: {r.stderr.strip()}")
+    else:
+        f = _git(root, ["fetch", "origin", branch])
+        if f.returncode != 0:
+            block(f"git fetch 실패: {f.stderr.strip()}")
+        remote = _rev(root, f"origin/{branch}")
+    plan["local_head"], plan["remote_head"] = head, remote
+    if head and remote:
+        plan["remote_state"] = _remote_state(root, head, remote)
+    if not head or head != remote:
+        block(f"remote_diverged: state={plan['remote_state']} "
+              f"HEAD={head} origin/{branch}={remote}")
+
+    changed = []
+    for entry in _SITE_PAGE_WATCH:
+        c = _changed_paths(root, f"{_SITE_REL}/{entry}")
+        if c is None:
+            block("git status 실패")
+            return done()
+        changed.extend(c)
+    unexpected = sorted(set(changed) - set(deploy_rel))
+    if unexpected:
+        block(f"사이트 페이지 외 기존 변경(pre_existing_dirty): {unexpected}")
+    to_commit = sorted(set(changed) & set(deploy_rel))
+    plan["changed_files"] = to_commit
+    plan["commit_would_be_required"] = plan["push_would_be_required"] = bool(to_commit)
+    return done()
+
+
+def _deploy_site_pages_local(root: str, files: dict, branch: str = _BRANCH) -> tuple:
+    """_site의 사이트 공통 9개 파일만 로컬 commit 1회 + 원격 불변 시에만 push.
+    반환: (ok, {"message","commit","files","committed","pushed"}). 불확실하면 fail-closed."""
+    try:
+        plan = _plan_site_pages_deploy(root, files, branch)
+    except _Blocked as e:
+        return False, _site_pages_result(f"배포 중단 — {e}")
+    root, head, to_commit = plan["_root"], plan["local_head"], plan["changed_files"]
+    if not to_commit:
+        return True, _site_pages_result("변경 없음 — 이미 배포된 사이트 페이지", head)
+
+    a = _git(root, ["add", "--", *to_commit])
+    if a.returncode != 0:
+        return False, _site_pages_result(f"배포 중단 — git add 실패: {a.stderr.strip()}", files=to_commit)
+    staged = _git(root, ["diff", "--cached", "--name-only", "-z"])
+    staged_set = {p for p in staged.stdout.split("\0") if p}
+    if staged.returncode != 0 or staged_set != set(to_commit):
+        # 방금 이 함수가 stage한 경로만 index에서 내린다(작업트리는 그대로).
+        _git(root, ["reset", "-q", "--", *to_commit])
+        return False, _site_pages_result(f"배포 중단 — staged 목록 불일치: {sorted(staged_set)}", files=to_commit)
+    c = _git(root, ["commit", "-q", "-m", SITE_PAGES_COMMIT_MESSAGE])
+    if c.returncode != 0:
+        _git(root, ["reset", "-q", "--", *to_commit])
+        return False, _site_pages_result(f"배포 중단 — git commit 실패: {c.stderr.strip()}", files=to_commit)
+    new_head = _rev(root, "HEAD")
+
+    # commit 대상 검증 — 9개 사이트 페이지 외 경로가 들어갔으면 push하지 않는다.
+    shown = _git(root, ["show", "--name-only", "--format=", "-z", "HEAD"])
+    committed = {p for p in shown.stdout.split("\0") if p}
+    if shown.returncode != 0 or committed != set(to_commit):
+        return False, _site_pages_result(
+            f"push 중단 — commit 파일 목록 불일치: {sorted(committed)} — 로컬 commit {new_head}만 생성됨",
+            new_head, to_commit, committed=True)
+
+    # push 직전 재확인 — 그 사이 원격이 바뀌었으면 push하지 않는다(pull/rebase/force 없음).
+    f = _git(root, ["fetch", "origin", branch])
+    now = _rev(root, f"origin/{branch}") if f.returncode == 0 else None
+    if now != head:
+        return False, _site_pages_result(
+            f"push 중단 — 원격 변경 감지(expected={head} now={now}). 로컬 commit {new_head}만 생성됨",
+            new_head, to_commit, committed=True)
+    p = _git(root, ["push", "origin", branch])
+    if p.returncode != 0:
+        return False, _site_pages_result(
+            f"push 실패: {p.stderr.strip()} — 로컬 commit {new_head}만 생성됨", new_head, to_commit, committed=True)
+    LOG.info("사이트 페이지 배포 push 완료: %s (%d files)", new_head, len(to_commit))
+    return True, _site_pages_result("사이트 페이지 배포 완료", new_head, to_commit, committed=True, pushed=True)
+
+
+def deploy_site_pages(cfg: dict, files: dict, *, dry_run: bool = False) -> tuple:
+    """files = site_generator.generate_all(cfg) 결과(이미 _site에 쓴 확정 스냅샷).
+    반환: (ok, result dict). GitHub Contents API/Pages API는 호출하지 않는다 — 운영 Pages는
+    master의 data/workspace/_site/** push를 감지하는 .github/workflows/deploy.yml이 배포한다.
+    dry_run=True: 같은 검증만(git add/commit/push/fetch 없음, ls-remote만), ok는 항상 False."""
+    root = cfg.get("_root") or "."
+    if dry_run:
+        try:
+            plan = _plan_site_pages_deploy(root, files, dry_run=True)
+            plan.pop("_root", None)
+            extra = ([] if is_configured(cfg) else ["GITHUB_TOKEN 미설정"]) + \
+                    ([] if _origin_full_name(root) else ["origin이 GitHub 저장소가 아님"])
+            if extra:
+                plan["blockers"] += extra
+                plan["deploy_allowed"] = False
+                plan["blocked_reason"] = plan["blocked_reason"] or extra[0]
+        except Exception as e:
+            plan = {"status": "dry_run", "dry_run": True, "deploy_allowed": False,
+                    "blocked_reason": f"dry-run 실패: {type(e).__name__}",
+                    "blockers": [f"dry-run 실패: {type(e).__name__}"]}
+        return False, plan
+
+    if not is_configured(cfg):
+        return False, _site_pages_result("GITHUB_TOKEN 미설정 — 배포 건너뜀")
+    try:
+        if not _origin_full_name(root):
+            return False, _site_pages_result("배포 중단 — origin이 GitHub 저장소가 아님")
+        ok, res = _deploy_site_pages_local(root, files)
+        if not ok:
+            LOG.warning("deploy_site_pages 중단: %s", res.get("message"))
+        return ok, res
+    except Exception as e:
+        LOG.error("deploy_site_pages 실패: %s", type(e).__name__)
+        return False, _site_pages_result(f"배포 실패: {type(e).__name__}")

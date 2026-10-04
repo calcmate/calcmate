@@ -18,6 +18,10 @@ from api.services.config_service import ConfigService, ConfigSectionNotAllowed
 from api.services import blog_scheduler_service
 from api.services import topic_pool_service
 from api.services import publishing_planner_service
+from api.services import calculator_quick_action_service
+from api.services import pipeline_run_service
+from api.services import integrated_run_service
+from api.services import content_sync_service
 from modules.config_loader import load_config
 from adapters.db import dual_adapter
 
@@ -253,3 +257,185 @@ def post_resume_sync(
     if result.get("result") in ("not_found", "unsupported"):
         return fail(result["result"].upper(), result.get("detail", ""))
     return fail("RESUME_FAILED", result.get("detail", ""))
+
+
+# ── Calculator Quick Action: 계산기 생성 ───────────────────────────────────
+# dashboard.py "🧮 계산기 생성" 버튼과 동일. calculator_quick_action_service.run_once() 재사용.
+@router.post("/calculator/run-once")
+def post_calculator_run_once(user: CurrentUser = Depends(require_admin)):
+    try:
+        result = calculator_quick_action_service.run_once()
+        return ok(result)
+    except calculator_quick_action_service.CalculatorQuickActionBusy as e:
+        return fail("LOCK_CONFLICT", str(e))
+
+
+# ── Pipeline Quick Action: 파이프라인 실행 ─────────────────────────────────
+# dashboard.py "▶ 파이프라인 실행(전량)" 버튼과 동일. pipeline_run_service.run_once() 재사용.
+@router.post("/pipeline/run-once")
+def post_pipeline_run_once(user: CurrentUser = Depends(require_admin)):
+    try:
+        result = pipeline_run_service.run_once()
+        return ok(result)
+    except pipeline_run_service.PipelineRunBusy as e:
+        return fail("LOCK_CONFLICT", str(e))
+
+
+# ── Pipeline Quick Action: 글 생성(1건) ─────────────────────────────────────
+# dashboard.py "📝 글 생성(1건)" 버튼과 동일(main.run_once(cfg, max_count=1)).
+# /pipeline/run-once(전량)·/blog/run-once(Blog Scheduler)와 다른 기능이다.
+@router.post("/pipeline/run-one")
+def post_pipeline_run_one(user: CurrentUser = Depends(require_admin)):
+    try:
+        result = pipeline_run_service.run_one()
+        return ok(result)
+    except pipeline_run_service.PipelineRunBusy as e:
+        return fail("LOCK_CONFLICT", str(e))
+
+
+# ── Integrated Quick Action: 통합 실행 ──────────────────────────────────────
+# dashboard.py "▶ 실행" 버튼과 동일. integrated_run_service.run_once() 재사용.
+class IntegratedRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    order: Literal["Calculator만", "WordPress만", "순차(Calculator→WordPress)"] = "순차(Calculator→WordPress)"
+    # CURRENT-SITE-02: React 현재 Site 선택(dashboard.py current_site_id). 생략하면
+    # dashboard.py 기본값(전체 site 목록의 첫 번째)을 쓴다 — 기존 호출 호환.
+    site_id: str | None = Field(default=None, min_length=1)
+
+
+@router.post("/integrated/run-once")
+def post_integrated_run_once(
+    body: IntegratedRunRequest,
+    user: CurrentUser = Depends(require_admin),
+):
+    try:
+        result = integrated_run_service.run_once(order=body.order, site_id=body.site_id)
+        return ok(result)
+    except integrated_run_service.IntegratedRunSiteNotFound as e:
+        return fail("VALIDATION_ERROR", str(e))
+    except calculator_quick_action_service.CalculatorQuickActionBusy as e:
+        return fail("LOCK_CONFLICT", str(e))
+    except pipeline_run_service.PipelineRunBusy as e:
+        return fail("LOCK_CONFLICT", str(e))
+
+
+# ── Content Sync Status ─────────────────────────────────────────────────────
+# pending/processing/failed 개수만 반환 (상세 리스트는 /content-sync/pending 등 조회)
+# CONTENT_SYNC.enabled는 ConfigService에서 조회. ContentSyncWorker 상태는 WorkerManager에서 조회.
+@router.get("/content-sync/status")
+def get_content_sync_status():
+    from api.services.config_service import ConfigService
+    from api.services.worker_manager import get_worker_manager
+    pending = dual_adapter.list_pending_sync()
+    processing = dual_adapter.list_all_sync("processing")
+    failed = dual_adapter.list_all_sync("failed_permanent")
+    enabled = bool(ConfigService().get_section("CONTENT_SYNC").get("enabled", True))
+    worker_status = get_worker_manager().get_status("content_sync")
+    return ok({
+        "enabled": enabled,
+        "running": worker_status.get("running", False),
+        "thread_alive": worker_status.get("thread_alive", False),
+        "pending_count": len(pending),
+        "processing_count": len(processing),
+        "failed_count": len(failed),
+        "total_queued": len(pending) + len(processing) + len(failed),
+    })
+
+
+# ── Content Sync Manual Run ─────────────────────────────────────────────────
+# dashboard.py "🔄 Sync Now" 버튼과 동일. content_sync_service.run_once() 재사용.
+class ContentSyncRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["recent", "full"] = "recent"
+
+
+@router.post("/content-sync/run-once")
+def post_content_sync_run_once(
+    body: ContentSyncRunRequest,
+    user: CurrentUser = Depends(require_admin),
+):
+    try:
+        result = content_sync_service.run_once(mode=body.mode)
+        return ok(result)
+    except content_sync_service.ContentSyncBusy as e:
+        return fail("LOCK_CONFLICT", str(e))
+
+
+# ── Calculator WebApp Scheduler ──────────────────────────────────────────────
+# Calculator WebApp Scheduler (CALC_WEBAPP_SCHEDULE) — 정적 계산기 웹앱 자동 생성
+# SEO Calculator Quick Action(/calculator/run-once)과는 완전히 별개다.
+
+class CalcWebAppSlot(BaseModel):
+    start: str
+    end: str
+
+
+class CalcWebAppConfigPatch(BaseModel):
+    enabled: bool | None = None
+    mode: str | None = None
+    targets: list[str] | None = None
+    poll_seconds: int | None = None
+
+
+@router.get("/calculator/status")
+def get_calculator_scheduler_status():
+    """Calculator WebApp Scheduler 상태 조회 (enabled, running, thread_alive)."""
+    try:
+        return ok(get_worker_manager().get_status("calc_webapp"))
+    except KeyError as e:
+        return fail("WORKER_NOT_FOUND", str(e))
+
+
+@router.get("/calculator/config")
+def get_calculator_config():
+    """Calculator WebApp Scheduler 설정 조회 (enabled, mode, targets, poll_seconds)."""
+    try:
+        return ok(ConfigService().get_section("CALC_WEBAPP_SCHEDULE"))
+    except ConfigSectionNotAllowed as e:
+        return fail("SECTION_NOT_ALLOWED", str(e))
+
+
+@router.patch("/calculator/config")
+def patch_calculator_config(
+    body: CalcWebAppConfigPatch,
+    user: CurrentUser = Depends(require_admin)
+):
+    """Calculator WebApp Scheduler 설정 변경 (enabled, mode, targets, poll_seconds)."""
+    try:
+        result = ConfigService().patch_calc_webapp_schedule(
+            enabled=body.enabled,
+            mode=body.mode,
+            targets=body.targets,
+            poll_seconds=body.poll_seconds,
+        )
+        return ok(result)
+    except ValueError as e:
+        return fail("VALIDATION_ERROR", str(e))
+
+
+@router.post("/calculator-webapp/run-once")
+def post_calculator_webapp_run_once(user: CurrentUser = Depends(require_admin)):
+    """Calculator WebApp Scheduler 수동 1회 실행 (Build → QA → _site).
+
+    주의: 이 endpoint는 SEO Calculator Quick Action(/calculator/run-once)과
+    완전히 별개다. 이 endpoint는 정적 계산기 웹앱 생성을 담당한다.
+    GitHub Deploy/Registry Publish는 자동 실행하지 않는다(qa_deploy 모드라도).
+    """
+    from api.services import calculator_webapp_scheduler_service
+    try:
+        result = calculator_webapp_scheduler_service.run_once()
+    except calculator_webapp_scheduler_service.CalculatorWebAppSchedulerBusy as e:
+        return fail("LOCK_CONFLICT", str(e))
+    return ok(result)
+
+
+# ── Publishing Planner Manual Run ────────────────────────────────────────────
+# dashboard.py "▶ 수동 Planner 실행" 버튼과 동일. publishing_planner_service.run_once() 재사용.
+# 기존 planner loop(WorkerManager) 또는 Streamlit 수동 실행과 중복되지 않음:
+# - WorkerManager는 AUTO_PUBLISHING.enabled + FASTAPI_WORKER_MODE=1일 때만 자동 실행
+# - 이 endpoint는 AUTO_PUBLISHING/BLOG_SCHEDULE 상태와 무관하게 1회 실행만 요청
+# - modules.publishing_planner.run_planner_once()는 자체 중복검사/lock 내장(fail-closed 반환)
+@router.post("/planner/run-once")
+def post_planner_run_once(user: CurrentUser = Depends(require_admin)):
+    result = publishing_planner_service.run_once()
+    return ok(result)

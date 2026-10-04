@@ -127,6 +127,25 @@ class GenerationJobStore:
         with self._lock:
             return self._running_count
 
+    def replace_result(self, job_id: str, result: dict) -> bool:
+        """완료된 Job의 result를 교체한다(Mode A preview 저장 후 생성물 제거용).
+        Job이 없거나 succeeded가 아니면 False."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status != "succeeded":
+                return False
+            job.result = result
+            return True
+
+    def remove(self, job_id: str) -> Optional[GenerationJob]:
+        """완료(succeeded/failed)된 Job을 store에서 제거하고 반환한다(Mode A preview
+        폐기용). queued/running Job은 제거하지 않고 None을 반환한다."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status in ("queued", "running"):
+                return None
+            return self._jobs.pop(job_id)
+
     def shutdown(self, wait: bool = True) -> None:
         self._executor.shutdown(wait=wait)
 

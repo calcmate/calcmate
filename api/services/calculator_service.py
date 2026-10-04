@@ -8,6 +8,7 @@ Registry v3(docs/registry/*.yaml)에 등록된 slug만 노출한다(Golden10 doc
 calculators 테이블에는 있지만 Registry v3에는 없는 행은 목록에서 제외 — 기존 화면과 동일 동작).
 """
 import json
+import threading
 
 from modules.config_loader import load_config
 from adapters.db.factory import get_calculator_storage_adapter
@@ -327,6 +328,153 @@ def get_calculator_generation_job(job_id: str) -> dict:
     if job is None:
         raise CalculatorNotFound(job_id)
     return job.to_public_dict()
+
+
+# ── CALCMATE-REMAINING-MIGRATION-SMALL-GAPS-02: Mode A 생성 → 검토 → 저장/폐기 ──
+# dashboard.py "🏭 자동 생성"은 generate_app() 결과를 session_state에 두고 운영자가
+# 검토한 뒤 "💾 calculators + app_templates 저장"(save_app) 또는 "🗑️ 생성 결과
+# 폐기 & 초기화"를 눌렀다. 위 submit_calculator_generation()(생성+저장 일괄, 기존
+# /generate 계약)은 그대로 두고, Mode B(submit_contract_generation/save)와 같은
+# Job 분리 패턴으로 이 2단계 흐름을 별도로 제공한다. preview Job은
+# slug_or_name이 "preview:"로 시작하는 것으로 구분한다.
+#
+# 원본과의 차이(의도적): 원본은 formula 검증 실패 시 경고만 하고 저장을 허용했지만,
+# 저장 단계에서 기존 FastAPI 안전장치(STEP 4-H-7 Formula Hard Gate, P0-1 HTML
+# 완결성 검사)를 그대로 적용해 차단한다.
+
+_PREVIEW_PREFIX = "preview:"
+_SLUG_RE = r"^[a-z0-9][a-z0-9-]*$"
+
+
+class CalculatorPreviewError(Exception):
+    """preview Job이 저장/폐기 가능한 상태가 아님(실행 중, preview 아님, 이미 저장됨)."""
+
+
+def _preview_job(job_id: str):
+    from api.services.generation_job_store import get_job_store
+    job = get_job_store().get(job_id)
+    if job is None:
+        raise CalculatorNotFound(job_id)
+    if not str(job.slug_or_name).startswith(_PREVIEW_PREFIX):
+        raise CalculatorPreviewError("Mode A preview 작업이 아닙니다.")
+    return job
+
+
+def submit_calculator_preview_generation(name: str, category: str, description: str, tier: int) -> dict:
+    """generate_app()만 백그라운드 Job으로 실행한다. 저장/Build/Deploy/DB·Registry
+    쓰기는 하지 않는다 — 결과는 in-memory Job result에만 남는다."""
+    from modules import app_factory
+    from modules.review_center import validate_html_js_completeness
+    from modules.slug_generator import generate_slug
+    from api.services.generation_job_store import get_job_store
+
+    def _target() -> dict:
+        cfg = load_config()
+        app = app_factory.generate_app(cfg, name, category=category, desc=description, tier=tier)
+        html_ok, html_msg, _ = validate_html_js_completeness(app.get("html", ""))
+        return {
+            "mode": "A_preview",
+            "saved": False,
+            "name": name,
+            "category": category,
+            "tier": app.get("tier", tier),
+            "suggested_slug": generate_slug(app.get("name") or name),
+            "formula_valid": app.get("_formula_valid", True),
+            "formula_msg": app.get("_formula_msg", ""),
+            "html_complete": html_ok,
+            "html_msg": html_msg,
+            "tokens": app.get("_tokens"),
+            "steps": app.get("_steps", []),
+            "calculator_type": app.get("calculator_type"),
+            "formula": app.get("formula"),
+            "seo_title": app.get("seo_title", ""),
+            "input_schema": app.get("input_schema", {}),
+            "output_schema": app.get("output_schema", {}),
+            "faq": app.get("faq", []),
+            "blog_draft": app.get("blog_draft", ""),
+            "html": app.get("html", ""),
+            "html_length": len(app.get("html", "") or ""),
+            "app": app,   # 저장 단계(save_calculator_preview)에서만 사용
+        }
+
+    store = get_job_store()
+    accepted, message, job_id = store.submit(f"{_PREVIEW_PREFIX}{name}", _target)
+    if not accepted:
+        raise CalculatorGenerateBusyError(message)
+    return store.get(job_id).to_public_dict()
+
+
+_PREVIEW_SAVE_LOCK = threading.Lock()
+
+
+def save_calculator_preview(job_id: str, slug: str) -> dict:
+    """preview Job의 생성물을 저장한다. 저장 직전에 Formula Hard Gate, HTML 완결성,
+    slug 형식, slug 중복을 다시 확인한 뒤 기존 save_app()을 그대로 호출하고,
+    기존 Mode A(submit_calculator_generation)와 같이 build_calculator()까지 수행한다.
+    저장에 성공하면 Job result에서 생성물을 제거하고 saved=True로 표시한다(재저장 방지)."""
+    import re
+    from modules import app_factory
+    from modules.review_center import validate_html_js_completeness
+    from api.services.generation_job_store import get_job_store
+
+    clean_slug = str(slug or "").strip().lower()
+
+    def _blocked(reason: str) -> dict:
+        return {"ok": False, "slug": clean_slug, "message": None, "build": None, "blocked_reason": reason}
+
+    with _PREVIEW_SAVE_LOCK:
+        job = _preview_job(job_id)
+        if job.status != "succeeded" or not job.result:
+            return _blocked(f"생성 작업이 완료되지 않았습니다(상태: {job.status}).")
+        if job.result.get("saved"):
+            raise CalculatorPreviewError("이미 저장된 생성 결과입니다.")
+        app = job.result.get("app")
+        if not app:
+            return _blocked("생성 결과를 찾을 수 없습니다.")
+        if not re.match(_SLUG_RE, clean_slug):
+            return _blocked("영문 slug를 입력하세요 — 소문자·숫자·하이픈만.")
+        if not app.get("_formula_valid", True):
+            return _blocked(f"formula 검증 실패: {app.get('_formula_msg', '')}")
+        html_ok, html_msg, _ = validate_html_js_completeness(app.get("html", ""))
+        if not html_ok:
+            return _blocked(html_msg)
+        conflict = check_contract_slug_conflict(clean_slug)
+        if conflict["conflict"]:
+            return _blocked(f"슬러그 중복: {conflict['message']}")
+
+        cfg = load_config()
+        ok_, msg = app_factory.save_app(cfg, app, slug=clean_slug)
+        if not ok_:
+            return _blocked(msg)
+
+        public = {k: v for k, v in job.result.items() if k not in ("app", "html")}
+        get_job_store().replace_result(job_id, {**public, "saved": True, "saved_slug": clean_slug})
+
+    try:
+        b = build_calculator(clean_slug)
+        build = {"ok": bool(b.get("ok")), "stage": b.get("stage"),
+                 "message": b.get("message"), "snapshot_dir": b.get("snapshot_dir")}
+    except CalculatorNotFound as e:
+        build = {"ok": False, "stage": "registry",
+                 "message": f"Build 대상 조회 실패(v3 Registry/DB): {e}", "snapshot_dir": None}
+    build_note = "🧮 Build 완료" if build["ok"] else f"🧮 Build 미완료({build['stage']})"
+    return {"ok": True, "slug": clean_slug, "message": f"{msg} | {build_note}",
+            "build": build, "blocked_reason": None}
+
+
+def discard_calculator_preview(job_id: str) -> dict:
+    """preview Job만 in-memory store에서 제거한다(운영 데이터 무관). 실행 중/
+    preview 아님/이미 저장됨/없음은 거부한다."""
+    from api.services.generation_job_store import get_job_store
+
+    job = _preview_job(job_id)
+    if job.status in ("queued", "running"):
+        raise CalculatorPreviewError(f"생성 작업이 아직 실행 중입니다(상태: {job.status}).")
+    if job.result and job.result.get("saved"):
+        raise CalculatorPreviewError("이미 저장된 생성 결과는 폐기할 수 없습니다.")
+    if get_job_store().remove(job_id) is None:
+        raise CalculatorPreviewError("폐기할 수 없는 상태입니다.")
+    return {"discarded": True, "job_id": job_id}
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -926,6 +1074,11 @@ def submit_contract_generation(*, name: str, category: str, description: str, ti
         if formula is not None and formula != "":
             pre_gen_validation = _run_sample_validation(formula, input_fields, test_cases)
             formula_status = pre_gen_validation["formula_status"]
+        # APP-FACTORY-02: dashboard.py와 동일하게 Tier2-B(날짜형, AI 없이 결정적 생성)는
+        # 날짜 계산 방법이 확정돼 있으므로 서버가 operator_confirmed로 결정한다
+        # (dashboard.py L2536-2541 "Tier2-B는 ... formula_status=operator_confirmed").
+        if tier == "Tier2-B":
+            formula_status = "operator_confirmed"
 
         contract = app_factory.build_contract(
             slug=slug, name=name, category=category, tier=tier,
@@ -1019,3 +1172,305 @@ def submit_contract_save(job_id: str, slug: str) -> dict:
     ok_, msg = app_factory.save_app(cfg, app, slug=slug)
     return {"ok": ok_, "slug": slug, "message": msg if ok_ else None,
             "blocked_reason": None if ok_ else msg}
+
+
+# ── APP-FACTORY-02: Mode B Formula 운영자 확정 ────────────────────────────────
+# dashboard.py "🔍 Formula 검증" → "✅ Formula 확정"(L2423-2476): Level 1/2(+test_cases
+# 있으면 Level 3) 검증을 통과한 formula만 운영자가 operator_confirmed로 확정한다.
+# test_cases가 없어도 확정할 수 있다(원본과 동일). 클라이언트는 확정 요청만 보내고,
+# 서버가 job에 저장된 Contract의 formula/input_fields/test_cases로 다시 검증한 뒤
+# 상태를 결정한다 — 클라이언트 플래그나 formula 전문을 신뢰하지 않는다.
+# formula_status는 생성 프롬프트에 영향을 주지 않으므로(HOLD 경고·저장 Hard-Gate·
+# Registry 메타에만 사용) 생성 후 확정해도 원본(생성 전 확정)과 저장 결과가 같다.
+
+class ContractFormulaConfirmError(Exception):
+    """확정할 수 없는 Contract job(실행 중, Contract job 아님, 결과 없음)."""
+
+
+_CONTRACT_CONFIRM_LOCK = threading.Lock()
+
+
+def confirm_contract_formula(job_id: str) -> dict:
+    from modules import app_factory
+    from api.services.generation_job_store import get_job_store
+
+    store = get_job_store()
+    with _CONTRACT_CONFIRM_LOCK:
+        job = store.get(job_id)
+        if job is None:
+            raise CalculatorNotFound(job_id)
+        if not str(job.slug_or_name).startswith("contract:"):
+            raise ContractFormulaConfirmError("Contract(Mode B) 생성 작업이 아닙니다.")
+        if job.status != "succeeded" or not job.result:
+            raise ContractFormulaConfirmError(f"생성 작업이 완료되지 않았습니다(상태: {job.status}).")
+        contract = job.result.get("contract") or {}
+        app = job.result.get("app") or {}
+        if not contract:
+            raise ContractFormulaConfirmError("생성 결과에 Contract가 없습니다.")
+
+        if contract.get("tier") == "Tier2-B":
+            new_status, validation = "operator_confirmed", None
+        else:
+            formula = contract.get("formula")
+            if formula is None or formula == "" or formula == {}:
+                return {"ok": False, "formula_status": contract.get("formula_status"),
+                        "validation": None, "message": "Formula를 입력한 Contract만 확정할 수 있습니다."}
+            validation = _run_sample_validation(formula, contract.get("input_fields") or [],
+                                                contract.get("test_cases") or [])
+            if not validation["all_samples_pass"]:
+                return {"ok": False, "formula_status": contract.get("formula_status"),
+                        "validation": validation,
+                        "message": "Formula 검증을 통과해야 확정할 수 있습니다."}
+            new_status = "operator_confirmed"
+
+        confirmed = {**contract, "formula_status": new_status}
+        new_app = {**app, "_contract": confirmed} if app else app
+        hold = app_factory.check_hold_rules(confirmed)
+        store.replace_result(job_id, {**job.result, "contract": confirmed, "app": new_app,
+                                      "hold_messages": hold.get("messages", [])})
+    return {"ok": True, "formula_status": new_status, "validation": validation,
+            "message": "✅ Formula 운영자 확정 완료 — operator_confirmed"}
+
+
+# ── APP-FACTORY-02: App Factory AI 추천(dashboard.py L1940-2376) ─────────────
+# 기존 modules.app_factory / modules.review_center 함수를 그대로 호출한다. 추천은
+# 표시용이며 생성/저장/배포를 일으키지 않는다. AI 호출 비용은 기존대로
+# BudgetTracker(data/logs/budget.json)에 기록된다. 예외 원문(키/헤더가 섞일 수 있음)은
+# 응답에 넣지 않는다 — 모듈이 reason/warnings에 원문을 넣는 실패 경로는 고정 문구로 바꾼다.
+
+class CalculatorAiSuggestError(Exception):
+    """AI 추천 실패(응답에는 고정 문구만 노출)."""
+
+
+_TIER_STR_TO_INT = {"Tier2-A": 2, "Tier2-B": 2, "Tier1": 1}   # dashboard.py L2014
+
+
+def _ai_log_failure(what: str, e: Exception) -> None:
+    import logging
+    logging.getLogger(__name__).warning("App Factory AI %s 실패: %s", what, type(e).__name__)
+
+
+def ai_suggest_idea(keyword: str = "") -> dict:
+    from modules import app_factory
+    try:
+        idea = app_factory.suggest_idea(load_config(), keyword=(keyword or "").strip())
+    except Exception as e:
+        _ai_log_failure("아이디어 제안", e)
+        raise CalculatorAiSuggestError("AI 제안 실패(직접 입력해주세요).") from None
+    return {"name": idea.get("name", ""), "category": idea.get("category", ""), "desc": idea.get("desc", "")}
+
+
+def ai_suggest_mode(name: str, category: str = "", description: str = "") -> dict:
+    from modules import review_center
+    r = review_center.suggest_mode(load_config(), name, category or "", description or "")
+    reason = r.get("reason", "")
+    if str(reason).startswith("추천 실패"):   # 모듈 실패 경로: 원문 예외 포함 → 고정 문구
+        reason = "추천 실패(안전 기본값 B로 보수적 대체)"
+    return {"mode": r.get("mode", "B"), "reason": reason, "confidence": r.get("confidence", "medium")}
+
+
+def ai_suggest_tier(name: str, description: str = "") -> dict:
+    from modules import review_center
+    r = review_center.suggest_tier(load_config(), name, description or "")
+    reason = r.get("reason", "")
+    if str(reason).startswith("추천 실패"):
+        reason = "추천 실패(기본값 Tier2-A)"
+    tier = r.get("tier", "Tier2-A")
+    return {"tier": tier, "reason": reason, "confidence": r.get("confidence", "medium"),
+            "tier_int": _TIER_STR_TO_INT.get(tier, 2), "tier2b_suggested": tier == "Tier2-B"}
+
+
+def detect_tier2b(name: str, description: str = "") -> dict:
+    from modules import review_center
+    return {"detected": bool(review_center.detect_tier2b_keywords(name or "", description or ""))}
+
+
+def ai_suggest_spec(name: str, category: str = "", description: str = "", tier: str = "Tier2-A") -> dict:
+    """dashboard.py _af_suggest_fields_with_ai()(L2219-2262)와 동일: 기존 계산기 목록(읽기)
+    + _suggest_spec(). 빈 제안이면 빈 목록을 돌려준다(덮어쓰기 여부는 화면이 결정)."""
+    from modules import app_factory
+    cfg = load_config()
+    try:
+        existing = CalculatorRepository(get_calculator_storage_adapter(cfg)).get_all()
+    except Exception:
+        existing = []
+    try:
+        spec, _ = app_factory._suggest_spec(cfg, name, category or "", description or "",
+                                            _TIER_STR_TO_INT.get(tier, 2), existing, _contract=None)
+    except Exception as e:
+        _ai_log_failure("필드 제안", e)
+        raise CalculatorAiSuggestError("필드 자동 제안에 실패했습니다. 기존 입력값은 유지됩니다.") from None
+    formula = spec.get("formula")
+    has_formula = formula not in (None, "", {})
+    formula_text = ""
+    if has_formula:
+        formula_text = json.dumps(formula, ensure_ascii=False) if isinstance(formula, dict) else str(formula)
+    return {
+        "input_fields": list((spec.get("input_schema") or {}).keys()),
+        "output_fields": list((spec.get("output_schema") or {}).keys()),
+        "formula": formula_text,
+        "labels": spec.get("labels") or {},
+    }
+
+
+def ai_suggest_formula(name: str, category: str = "", description: str = "", input_fields: list = None,
+                       output_fields: list = None, legal_refs: list = None, slug: str = None) -> dict:
+    """AF.suggest_formula() 결과를 그대로 반환한다. success=True는 확정이 아니다
+    (확정은 confirm_contract_formula()에서 서버 검증 후에만)."""
+    from modules import app_factory
+    r = app_factory.suggest_formula(
+        cfg=load_config(), name=name or "", category=category or "", desc=description or "",
+        input_fields=list(input_fields or []), output_fields=list(output_fields or []),
+        legal_refs=list(legal_refs or []), slug=(slug or "").strip() or None,
+    )
+    reason, warnings = r.get("reason", ""), list(r.get("warnings") or [])
+    if not r.get("success") and str(reason).startswith("AI 호출 실패"):
+        reason, warnings = "AI 호출 실패", []   # 모듈이 원문 예외를 reason/warnings에 담는 경로
+    formula = r.get("formula")
+    formula_text = ""
+    if formula not in (None, "", {}):
+        formula_text = json.dumps(formula, ensure_ascii=False) if isinstance(formula, dict) else str(formula)
+    return {"success": bool(r.get("success")), "formula": formula_text, "reason": reason,
+            "assumptions": list(r.get("assumptions") or []), "warnings": warnings,
+            "status": r.get("status", "not_generated")}
+
+
+def suggest_contract_slug(name: str) -> dict:
+    from modules.slug_generator import generate_slug
+    return {"slug": generate_slug((name or "").strip()) if (name or "").strip() else ""}
+
+
+# ── CALCMATE-STREAMLIT-REMAINING-MIGRATION-GAP-01-03-IMPLEMENT-01 ─────────────
+# GAP-01 상태토글(dashboard.py "⏸ 상태토글" L1783) / GAP-02 삭제(dashboard.py "🗑 삭제"
+# L1798). 목록/상세와 같은 대상(Registry v3에 등록된 slug)만 다룬다.
+import re as _re
+import secrets as _secrets
+import time as _time
+
+_SLUG_RE = _re.compile(r"^[a-z0-9][a-z0-9-]{0,99}$")
+CALCULATOR_STATUSES = ("active", "inactive")
+
+
+class CalculatorValidationError(Exception):
+    """slug 형식 오류 / 허용되지 않은 status 값."""
+
+
+class CalculatorDeleteError(Exception):
+    """삭제 거부·확인 실패·삭제 실패. code는 라우터가 그대로 fail(code)로 쓴다."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def _validate_slug(slug: str) -> None:
+    if not isinstance(slug, str) or not _SLUG_RE.match(slug):
+        raise CalculatorValidationError("잘못된 slug 형식입니다.")
+
+
+def set_calculator_status(slug: str, status: str) -> dict:
+    """원본 repo.update(cid, {"status": ...})와 같은 경로(CalculatorRepository.update)로
+    status 한 필드만 바꾼다(updated_at은 repository가 기존처럼 갱신). 최종 status는 저장
+    후 다시 읽은 값으로 반환한다."""
+    _validate_slug(slug)
+    if status not in CALCULATOR_STATUSES:
+        raise CalculatorValidationError("status는 active 또는 inactive만 허용됩니다.")
+    repo, _cfg = _repo_and_cfg()
+    if slug not in _registry():
+        raise CalculatorNotFound(slug)
+    calc = repo.get_by_slug(slug)
+    if not calc:
+        raise CalculatorNotFound(slug)
+    previous = calc.get("status", "")
+    repo.update(calc.get("id", ""), {"status": status})
+    saved = repo.get_by_slug(slug) or {}
+    return {"ok": True, "slug": slug, "status": saved.get("status", status), "previous": previous}
+
+
+# GAP-02: 서버가 발급한 1회용 확인 토큰(TTL) — prepare에서 삭제 대상/범위를 보여주고,
+# confirm에서 토큰·slug 재입력·발급자·calc id를 서버가 다시 확인한 뒤에만 삭제한다.
+DELETE_TOKEN_TTL_SECONDS = 120
+_delete_tokens: dict = {}
+_delete_lock = threading.Lock()
+
+DELETE_SCOPE = [
+    "calculators DB 행",
+    "app_templates 행(template_id)",
+    "docs/registry_auto.yaml 엔트리",
+    "Registry v3(_af.yaml) 엔트리",
+    "Contract Instance",
+    "docs/calculator_index.json 재생성",
+]
+DELETE_NOT_TOUCHED = ["data/workspace/_site", "data/workspace", "logs", "WordPress", "Git/GitHub"]
+
+
+def _purge_expired_delete_tokens(now: float) -> None:
+    for t in [t for t, rec in _delete_tokens.items() if rec["expires"] <= now]:
+        _delete_tokens.pop(t, None)
+
+
+def _require_app_factory(slug: str, v3_reg: dict) -> dict:
+    """modules.app_factory.delete_app()의 보호 규칙(source != app_factory면 삭제 거부)을
+    삭제 시도 전에 서버에서 먼저 적용한다."""
+    entry = v3_reg.get(slug) or {}
+    if entry.get("source") != "app_factory":
+        raise CalculatorDeleteError("DELETE_FORBIDDEN", "App Factory 계산기만 삭제할 수 있습니다.")
+    return entry
+
+
+def prepare_calculator_delete(slug: str, actor_id: str) -> dict:
+    _validate_slug(slug)
+    calc, v3_reg, _cfg = _get_calc_or_raise(slug)
+    entry = _require_app_factory(slug, v3_reg)
+    token = _secrets.token_urlsafe(32)
+    now = _time.monotonic()
+    with _delete_lock:
+        _purge_expired_delete_tokens(now)
+        _delete_tokens[token] = {"slug": slug, "actor_id": actor_id, "calc_id": calc.get("id", ""),
+                                 "expires": now + DELETE_TOKEN_TTL_SECONDS}
+    return {
+        "slug": slug,
+        "name": calc.get("name", ""),
+        "calc_id": calc.get("id", ""),
+        "source": entry.get("source"),
+        "registry_status": entry.get("status"),
+        "token": token,
+        "expires_in": DELETE_TOKEN_TTL_SECONDS,
+        "scope": list(DELETE_SCOPE),
+        "not_touched": list(DELETE_NOT_TOUCHED),
+    }
+
+
+def confirm_calculator_delete(slug: str, token: str, confirm_slug: str, actor_id: str) -> dict:
+    """토큰은 성공/실패와 무관하게 1회 사용 후 폐기한다. 직렬화(_delete_lock)로 중복 삭제를
+    막고, 삭제는 원본과 같은 modules.app_factory.delete_app(cfg, slug)만 호출한다."""
+    _validate_slug(slug)
+    with _delete_lock:
+        rec = _delete_tokens.pop(token, None) if isinstance(token, str) else None
+        if (rec is None or rec["expires"] <= _time.monotonic() or rec["slug"] != slug
+                or rec["actor_id"] != actor_id or confirm_slug != slug):
+            raise CalculatorDeleteError("CONFIRMATION_INVALID",
+                                        "삭제 확인이 유효하지 않습니다. 삭제 준비부터 다시 진행하세요.")
+        calc, v3_reg, cfg = _get_calc_or_raise(slug)
+        if calc.get("id", "") != rec["calc_id"]:
+            raise CalculatorDeleteError("CONFIRMATION_INVALID",
+                                        "삭제 준비 이후 대상이 바뀌었습니다. 삭제 준비부터 다시 진행하세요.")
+        _require_app_factory(slug, v3_reg)
+
+        from modules import app_factory as AF
+        try:
+            deleted, _msg = AF.delete_app(cfg, slug)
+        except Exception:
+            deleted = False
+        if not deleted:
+            raise CalculatorDeleteError("DELETE_FAILED", "계산기 삭제에 실패했습니다. 서버 로그를 확인하세요.")
+
+        repo, _cfg2 = _repo_and_cfg()
+        db_removed = repo.get_by_slug(slug) is None
+        registry_removed = slug not in _registry()
+        if not (db_removed and registry_removed):
+            raise CalculatorDeleteError(
+                "DELETE_VERIFY_FAILED",
+                f"삭제 후 검증 실패 — DB 제거 {db_removed} / Registry 제거 {registry_removed}")
+        return {"ok": True, "slug": slug, "calc_id": rec["calc_id"], "deleted": True,
+                "db_removed": db_removed, "registry_removed": registry_removed}
