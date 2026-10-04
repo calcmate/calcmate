@@ -18,9 +18,10 @@ FastAPI (api/main.py, :8000)
 Service / Repository (api/services/, modules/, repositories/, adapters/)
 ```
 
-### Streamlit = legacy / 폐기 예정
+### Streamlit = 제거됨 (재도입 금지)
 
-`dashboard.py` 등 기존 Streamlit 코드는 legacy로 취급한다.
+Streamlit 대시보드(`dashboard.py`, `modules/setup_wizard.py`)는 React/FastAPI 이관 후 제거되었다
+(`ee475e5`, `6c9f78c`). 저장소에 Streamlit 코드·의존성·실행 경로는 남아 있지 않다.
 
 금지:
 
@@ -31,11 +32,8 @@ Service / Repository (api/services/, modules/, repositories/, adapters/)
 - 신규 scheduler / automation을 Streamlit에 연결
 - FastAPI 대신 Streamlit을 신규 backend로 사용
 
-허용 (조사 목적만):
-
-- 기존 기능 파악, 이관 대상 확인, 기존 로직 참고, 폐기 전 영향 분석
-
-Streamlit에만 있는 기능이 필요하면 FastAPI/React로 **이관할 대상**으로 기록한다.
+Streamlit 이관은 완료되었다. 과거 Streamlit 동작을 참고해야 하면 git 이력(삭제 커밋 이전)만 조회하고,
+필요한 기능은 FastAPI/React 신규 기능으로 구현한다.
 
 ---
 
@@ -174,7 +172,7 @@ FOUND → CLASSIFY → REPORT → OWNER DECISION
 | `data/schedule/blog/oneoff_schedule.json` | BLOG | `modules/scheduler` (add/save/mark), `modules/publishing_planner`, `api/services/blog_scheduler_service` | — |
 | `blog_articles` 테이블 | BLOG | `modules/wp_blog_sync`, `repositories/blog_article_repository` (이 외 writer 후보는 검색 기준이며 호출 경로 미검증) | GOLDEN10: 10건이 Golden10 게시글 기록 |
 | `data/sync/pending_sync.json` | INFRA | `adapters/db/dual_adapter` (Sheets OK / SQLite 실패 시 재시도 큐) | — |
-| `config/config.yaml` | INFRA | `api/services/config_service` (Settings PATCH), legacy `dashboard.py` 설정 화면 | — |
+| `config/config.yaml` | INFRA | `api/services/config_service` (Settings PATCH) — 구 legacy `dashboard.py` 설정 화면 writer는 제거됨 | — |
 | `config/secrets.yaml` | INFRA | `repositories/site_repository.save_wp_profile`(sites 생성 시), `api/services/config_service` 외 (검색 기준) | — |
 
 ### OWNER 미확정 — 수정 전 OWNER DECISION 필요

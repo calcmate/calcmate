@@ -1,6 +1,8 @@
 # ARCHITECTURE.md — 블로그자동화 v12 Lite / SalaryMate 구조
 
 > 실제 소스 코드 기준(2026-06-30, Sprint 2A/2B + Calculator Reviewer 개선 반영).
+> 2026-10 갱신: UI Layer만 현재 구조로 정정(Streamlit `dashboard.py`/`setup_wizard`/`assets/css` 제거 → React + FastAPI).
+> 그 외 계층·12단계 설명은 2026-06-30 당시 구조 기록이다. 대시보드 최신 구조는 `docs/ARCHITECTURE.md` 참고.
 
 ---
 
@@ -37,8 +39,8 @@ Pipeline            (활성 Platform + Feature 조합으로 자동 결정)
 ## 2. 5계층 (소스 구조)
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│ UI Layer       dashboard.py(Streamlit 8그룹 2단 네비, render_*)     │
-│                setup_wizard · assets/css · scripts/*.bat            │
+│ UI Layer       React (frontend/) — 공식 Dashboard UI               │
+│ API Layer      FastAPI (api/routers · api/services) · scripts/*.bat │
 ├──────────────────────────────────────────────────────────────────┤
 │ Business Layer main.py(run_once/_process_one: 12단계)               │
 │   파이프라인   cleaner·strategist·planner·writer·editor·            │

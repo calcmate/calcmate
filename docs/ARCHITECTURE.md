@@ -76,20 +76,29 @@ App Factory 신규 계산기는 legal이 비어 있다(`needs_human_legal: true`
 
 ## Dashboard Architecture
 
-> 현재: Streamlit Dashboard(`dashboard.py`, `modules/setup_wizard.py`)가 운영 중이며,
-> React + FastAPI Dashboard(`frontend/`, `api/`)로 이관 진행 중.
-> 목표: React = 공식 Dashboard UI, FastAPI = 공식 Dashboard Backend,
-> Streamlit = legacy migration source(이관 원본). 이관 완료 후 Streamlit 제거.
+> 현재: React = 공식 Dashboard UI(`frontend/`), FastAPI = 공식 Dashboard Backend(`api/`).
+> Streamlit Dashboard(`dashboard.py`, `modules/setup_wizard.py`)는 React/FastAPI 이관 완료 후 **제거되었다**(`dashboard.py` `6c9f78c`, `modules/setup_wizard.py` `ee475e5`).
+> (이력: Streamlit은 이관 기간 동안 legacy migration source(이관 원본)로만 취급되었다.)
+
+```
+React (frontend/)
+  ↓
+FastAPI (api/routers → api/services)
+  ↓
+CalcMate modules (modules/, repositories/, adapters/)
+  ↓
+DB / Registry / Content / WP
+```
 
 ### 현재 상태
 
 | 계층 | 현재 구현 | 상태 |
 |------|-----------|------|
-| UI | Streamlit (`dashboard.py` 3989줄, 8그룹 2단 네비) + `modules/setup_wizard.py` | 운영 중 (Legacy) |
-| UI | React + Vite (`frontend/src/`) | 이관 진행 중 (공식 목표) |
+| UI | React + Vite (`frontend/src/`) | 운영 중 (공식 UI) |
+| UI (이력) | Streamlit (`dashboard.py` 3989줄, 8그룹 2단 네비) + `modules/setup_wizard.py` | 제거됨 (`6c9f78c`, `ee475e5`) |
 | Backend | FastAPI (`api/`) — 20개 서비스, 13개 라우터 | 운영 중 (공식 Backend) |
-| 스케줄러 | Streamlit 백그라운드 스레드 + FastAPI WorkerManager | FastAPI로 이관 중 |
-| 설정 저장 | Streamlit: config.yaml 직접 YAML 치환 | FastAPI: ConfigService.patch_* |
+| 스케줄러 | FastAPI WorkerManager (구 Streamlit 백그라운드 스레드는 제거됨) | FastAPI 단독 |
+| 설정 저장 | FastAPI: ConfigService.patch_* (구 Streamlit의 config.yaml 직접 YAML 치환은 제거됨) | FastAPI 단독 |
 
 ### 목표 상태
 
@@ -107,8 +116,8 @@ FastAPI Service (api/services/<domain>_service.py)
 modules/repositories/data layer
 ```
 
-Streamlit(`dashboard.py`, `modules/setup_wizard.py`)은 **이 흐름에 포함시키지 않는다**.
-기존 Streamlit 코드는 이관 시 참고용(legacy source)으로만 사용한다.
+Streamlit은 제거되었으며 **이 흐름에 포함되지 않는다**. 이관 기간에는 Streamlit 코드
+(`dashboard.py`, `modules/setup_wizard.py`)를 참고용(legacy source)으로만 사용했다 — 원본은 git 이력(삭제 커밋 `ee475e5`/`6c9f78c` 이전)에서 확인한다.
 
 ### 핵심 규칙
 
@@ -116,13 +125,13 @@ Streamlit(`dashboard.py`, `modules/setup_wizard.py`)은 **이 흐름에 포함�
 2. **새로운 Dashboard UI는 React frontend에 구현한다.**
 3. **새로운 backend/API 기능은 FastAPI에 구현한다.**
 4. **React는 FastAPI API를 통해 backend와 통신한다.**
-5. `dashboard.py`와 `modules/setup_wizard.py`는 현재 Streamlit 기능의 **이관 원본(legacy source)**으로 취급한다.
-6. 기존 Streamlit 기능을 React/FastAPI로 이관할 때는 기존 Streamlit 코드를 참고할 수 있지만, **신규 기능을 Streamlit 코드에 추가해서는 안 된다.**
+5. `dashboard.py`와 `modules/setup_wizard.py`는 이관 원본(legacy source)이었으며 현재 삭제되었다(git 이력으로만 참고).
+6. Streamlit을 재도입하지 않는다. 과거 Streamlit 동작을 참고할 때는 git 이력만 사용하고, **신규 기능을 Streamlit으로 구현해서는 안 된다.**
 7. 새로운 `st.*`, `streamlit.*`, `st.session_state` 사용을 신규 Dashboard 기능에 추가하지 않는다.
 8. 새로운 BAT/스크립트에 `streamlit run`을 추가하지 않는다.
 9. 기능 추가가 필요하면 먼저 FastAPI router/service와 React page/component/API client 구조를 검토한다.
 
-### 이관 완료 현황 (2026-09 기준)
+### 이관 완료 현황 (2026-09 기준, 2026-10 Streamlit 제거 반영)
 
 | 기능 | Streamlit | FastAPI API | React UI | 상태 |
 |------|-----------|-------------|----------|------|
@@ -142,10 +151,10 @@ Streamlit(`dashboard.py`, `modules/setup_wizard.py`)은 **이 흐름에 포함�
 | 헬스체크 | ✅ | ✅ `/api/health/*` | ✅ `Health` | 완료 |
 | 전략회의실 | ✅ | ✅ `/api/strategy-room/run` | ✅ `StrategyRoom` | 완료 |
 | 설정 (General/Image-Google) | ✅ | ✅ `/api/settings/*` | ✅ `Settings` + Panels | 부분 |
-| 동기화 복구 | ✅ | ⚠️ run-once만 | ❌ | 미완료 |
-| 초기 설정 마법사 | ✅ | ❌ | ❌ | 미이관 |
-| AI Assistant | ✅ | ❌ | ❌ | 미이관 |
-| 사이트 마법사 | ✅ | ✅ CRUD만 | ✅ 목록/Override | 미완료 |
+| 동기화 복구 | ✅ | ✅ `/api/scheduler/content-sync/*` | ✅ `PendingSync` | 완료 |
+| 초기 설정 마법사 | ✅ | ❌ | ❌ | 미이관 (Streamlit과 함께 삭제) |
+| AI Assistant | ✅ | ✅ `/api/assistant/*` | ✅ `AiAssistant` | 완료 |
+| 사이트 마법사 | ✅ | ✅ `/api/sites/*` | ✅ `SiteWizard`(5단계) | 완료 |
 
 ### 신규 기능 추가 시 체크리스트
 
@@ -155,4 +164,4 @@ Streamlit(`dashboard.py`, `modules/setup_wizard.py`)은 **이 흐름에 포함�
 - [ ] `frontend/src/pages/<Feature>.jsx` 페이지 생성
 - [ ] `frontend/src/components/<Feature>Panel.jsx` 컴포넌트 생성
 - [ ] `frontend/src/App.jsx`에 `<Route>` 등록
-- [ ] Streamlit(`dashboard.py`, `setup_wizard.py`) **수정하지 않음** 확인
+- [ ] Streamlit(`st.*`, `streamlit run`) **재도입하지 않음** 확인

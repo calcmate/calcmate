@@ -1,6 +1,6 @@
 # 블로그자동화 v12 Lite / SalaryMate 플랫폼
 
-> 정부정책(RSS) 블로그 자동화 + 계산기 콘텐츠 플랫폼 + AI 운영센터(Streamlit).
+> 정부정책(RSS) 블로그 자동화 + 계산기 콘텐츠 플랫폼 + AI 운영센터(React + FastAPI).
 > 본 문서는 **실제 소스 코드 기준**. Python 85개 파일.
 
 ---
@@ -26,7 +26,7 @@ README (이 문서, 5분 개요)
 ---
 
 ## 1. 프로젝트 소개
-- **목적**: RSS/계산기 키워드를 수집 → AI로 SEO 글·계산기 페이지 생성·검수 → 이미지 → WordPress/GitHub Pages 발행까지 무인 자동화. 운영은 Streamlit 대시보드.
+- **목적**: RSS/계산기 키워드를 수집 → AI로 SEO 글·계산기 페이지 생성·검수 → 이미지 → WordPress/GitHub Pages 발행까지 무인 자동화. 운영은 React + FastAPI 대시보드(Streamlit 대시보드는 제거됨).
 - **버전**: v12 Lite (12단계 파이프라인 코어는 v11.6 계승, UI/운영 슬림화).
 - **두 갈래 콘텐츠**: ① 정책/RSS 블로그(`run_once` 12단계) ② 계산기 플랫폼(생성→AI검수→정적앱→배포).
 
@@ -44,18 +44,20 @@ README (이 문서, 5분 개요)
 | 보안 | **Secrets 분리**(config/secrets.yaml, gitignore) |
 
 ## 3. 현재 Dashboard 구조
-Streamlit **8그룹 2단 네비게이션**(그룹 → 하위 페이지). `dashboard.py`의 `NAV_GROUPS`.
+React(`frontend/`) → FastAPI(`api/`) → CalcMate modules. 사이드바 메뉴는 `frontend/src/components/Sidebar.jsx`.
 
-| 그룹 | 하위 페이지 |
+| 메뉴 | 하위 페이지 |
 |------|-------------|
-| 🏠 Dashboard | 운영센터(현재Site·5KPI·Workflow·진행현황) · 현황 |
-| 📝 Content | 발행 목록 · 작업 보드 · AI Workspace · 전략회의실 |
-| 🧮 Calculator | App Factory · 계산기 관리 |
-| 📅 Scheduler | 오늘 발행 일정 · AI Pipeline · **사이트 관리** |
-| 💰 Revenue | 비용 모니터(Cost/Retry) |
-| 📡 Logs | 오류 로그 · 실시간 로그 · 헬스체크 |
-| 🔧 Settings | 설정(AI역할·모델·WP·Telegram) |
-| 🤖 AI Assistant | AI Assistant |
+| 🏠 운영센터 | 운영센터(KPI·파이프라인 상태·진행현황·현황) |
+| 🧮 계산기 | 목록 · 생성/관리(App Factory) · Scheduler |
+| 📝 블로그 | 목록/관리 · 생성 · Scheduler |
+| 📋 Publish · 🗑️ Trash | 발행 목록/수정 · 휴지통 |
+| 💰 AI 비용 | 비용 모니터 |
+| 🧠 전략회의실 · 🤖 AI Assistant · 💬 AI Workspace · 📋 작업 보드 | 운영비서/작업 |
+| 🌐 사이트 관리 · 🧙 사이트 마법사 | 사이트 CRUD/Override · 5단계 마법사 |
+| 📊 로그 · ⚙️ Settings · ❤️ Health | 로그 · 설정 · 헬스체크 |
+
+> 이전 Streamlit `dashboard.py`(8그룹 2단 네비)는 React/FastAPI 이관 후 제거되었다(`6c9f78c`).
 
 ## 4. 지원 Platform
 **WordPress와 Calculator는 서로 독립적인 Platform이다.** 동시 활성 가능하며 각각 독립된 Feature 목록을 가진다(Site Wizard에서 선택, sites 시트 `platforms`/`features` 컬럼 저장).
@@ -91,7 +93,9 @@ Streamlit **8그룹 2단 네비게이션**(그룹 → 하위 페이지). `dashbo
 ## 6. 프로젝트 폴더 구조
 요약(상세는 `FILE_STRUCTURE.md`):
 ```
-main.py · dashboard.py · health_check.py
+main.py · health_check.py · start_dashboard.bat(FastAPI+React 기동)
+api/      FastAPI 공식 Dashboard Backend(routers/ · services/)
+frontend/ React + Vite 공식 Dashboard UI
 config/   config.yaml · secrets.yaml · secrets.example.yaml · score_weights.yaml · site_mode.yaml
 modules/  파이프라인·계산기엔진·AI/운영(ai_assistant/cost_manager/retry_queue/telegram_ops 등)
 repositories/ · adapters/(db,storage) · scripts/ · templates/ · prompts/ · docs/
@@ -100,8 +104,8 @@ repositories/ · adapters/(db,storage) · scripts/ · templates/ · prompts/ · 
 ## 7. 최초 설치
 1. **Python 3.11+** (검증 3.12 venv).
 2. 의존성: `python -m venv .venv` → `.venv\Scripts\python.exe -m pip install -r requirements.txt`
-   (openai, anthropic, google-genai, gspread, google-api-python-client, feedparser, streamlit, pandas, numpy, Pillow, pyyaml, requests)
-3. Google: `credentials.json`(서비스계정) + 시트/드라이브를 서비스 계정 이메일에 **편집자 공유**. 최초 미설정 시 대시보드가 설정 마법사 자동 표시.
+   (openai, anthropic, google-genai, gspread, google-api-python-client, feedparser, pandas, numpy, Pillow, pyyaml, requests)
+3. Google: `credentials.json`(서비스계정) + 시트/드라이브를 서비스 계정 이메일에 **편집자 공유**. (구 Streamlit 설정 마법사는 Streamlit 제거와 함께 삭제됨 — `config/secrets.yaml`과 React ⚙️ Settings에서 설정)
 
 ## 8. Secrets 설정 🔐
 민감정보는 `config/config.yaml`이 아닌 **`config/secrets.yaml`**(gitignore, 미추적)에 둔다. `ConfigLoader`가 런타임에 두 파일을 병합(secrets 우선)하므로 기존 코드는 그대로 동작.

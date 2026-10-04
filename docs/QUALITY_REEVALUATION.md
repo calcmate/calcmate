@@ -5,7 +5,7 @@
 **옛 HOLD가 현재 기준에서도 여전히 HOLD인지 자동으로 재평가**되어 통과 가능하면 다시 발행된다.
 
 이 문서는 그 재평가 시스템의 설계를 기록한다.
-관련 코드: `modules/calculator_pipeline.py`, `repositories/article_repository.py`, `main.py`(CLI), `dashboard.py`(버튼).
+관련 코드: `modules/calculator_pipeline.py`, `repositories/article_repository.py`, `main.py`(CLI), `dashboard.py`(버튼 — 작성 당시 legacy Streamlit, 현재 삭제됨).
 
 ---
 

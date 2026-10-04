@@ -7,11 +7,11 @@
 ├─ main.py                  12단계 파이프라인 진입점
 │                           플래그: --dry-run/--once/--scheduler/--strategy-room/
 │                                   --calculator/--seed-calculators/--instance
-├─ dashboard.py             Streamlit 운영센터 8그룹 2단 네비(render_* 홈)
+├─ api/                     FastAPI 공식 Dashboard Backend(routers/ · services/)
+├─ frontend/                React + Vite 공식 Dashboard UI(src/pages · src/components)
+├─ start_dashboard.bat      FastAPI(127.0.0.1:8000) + React(127.0.0.1:5173) 기동
 ├─ health_check.py          ★헬스체크(OpenAI/Claude/Gemini/Sheet/Drive/WP/SA)
-├─ dashboard_backup.py / dashboard_backup_ui.py   백업본(미사용)
 ├─ requirements.txt / credentials.json / .gitignore
-├─ assets/css/dashboard.css 다크/글래스 테마
 ├─ config/
 │   ├─ config.yaml          일반 설정(모델/예산/Google/WP URL/CALC_REVIEW_*/TELEGRAM_EVENTS 등)
 │   ├─ secrets.yaml         🔐 민감정보(API키/앱비번/봇토큰 + wordpress_profiles/ai_keys) — gitignore
@@ -38,7 +38,6 @@
 | 파일 | 역할 | 의존 |
 |------|------|------|
 | `main.py` | `parse_args`(7플래그) · `run_once`+`_process_one`(12단계) | 전 파이프라인 모듈, scheduler/calculator_pipeline(지연), health_check, config_loader |
-| `dashboard.py` | 운영센터 8그룹 + render_* 홈(현재Site·5KPI·Workflow·진행현황) + Site Manager/Wizard/Settings + 통합 실행버튼 + 2단 캐시 | scheduler/site_wizard/app_*/ai_*/calculator_*/repositories/BudgetTracker/config_loader/main(지연) |
 | `health_check.py` | 6서비스+서비스계정 점검 → health_last.json | openai/anthropic/google.genai/googleapiclient |
 
 ## modules/ — 파이프라인 단계
@@ -110,4 +109,4 @@
 ## scripts/ (.bat = cp949/CRLF, venv 직접호출)
 install · run_pipeline(--once) · run_scheduler(--scheduler) · run_dryrun(--dry-run) · run_strategy_room(--strategy-room) · sync_cache(미러 워밍) · repair_google_setup.py
 
-> 참고: Legacy `run_schedule.bat`/`run_dashboard_new.bat`/`dashboard_ui_refactor.py`는 v12 Lite에서 **삭제됨**(존재하지 않음). Streamlit launcher `run_dashboard.bat`/`start_dashboard_autostart.bat`도 삭제됨(CALCMATE-STREAMLIT-LAUNCHER-CLEANUP-01) — 대시보드 실행은 루트 `start_dashboard.bat`(React+FastAPI).
+> 참고: Legacy `run_schedule.bat`/`run_dashboard_new.bat`/`dashboard_ui_refactor.py`는 v12 Lite에서 **삭제됨**(존재하지 않음). Streamlit launcher `run_dashboard.bat`/`start_dashboard_autostart.bat`도 삭제됨(CALCMATE-STREAMLIT-LAUNCHER-CLEANUP-01) — 대시보드 실행은 루트 `start_dashboard.bat`(React+FastAPI). Streamlit `dashboard.py`와 `dashboard_backup.py`/`dashboard_backup_ui.py`도 삭제됨(`6c9f78c`), Streamlit 전용 테마 `assets/css/dashboard.css`도 삭제됨 — 대시보드는 `api/` + `frontend/`.

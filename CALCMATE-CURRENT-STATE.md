@@ -57,7 +57,7 @@
 | 대시보드 API/UI 작업 (미커밋) | `api/` 5개 파일, `frontend/src/api/client.js`, `BlogSchedulerPanel.jsx` | INFRA / BLOG UI |
 | 미커밋 B hunk | `modules/config_loader.py` C1/C4, `modules/scheduler.py` S6–S8 | INFRA / BLOG |
 | 설정·동기화 데이터 | `config/config.yaml`, `data/sync/pending_sync.json` | INFRA |
-| Streamlit legacy | `dashboard.py`, `modules/setup_wizard.py`(D) | legacy |
+| Streamlit legacy (제거 완료) | `dashboard.py`, `modules/setup_wizard.py` — 삭제됨(`6c9f78c`, `ee475e5`) | 제거됨 |
 
 ---
 
@@ -75,7 +75,8 @@
 | 프론트엔드 커밋 상태 | `frontend/src`는 10개 파일만 tracked. `Calculators.jsx`, `CalculatorDetail.jsx` 등 대부분 untracked | `git ls-files` |
 
 migration 상태: 계산기 생성 API(A1)와 대시보드 라우터(A2)는 커밋됐다.
-나머지 Streamlit 전용 기능(AI Assistant/Workspace, 설정 일부, 설정 마법사 대체 등)은 미이관이다.
+이후 AI Assistant/Workspace 등 남은 Streamlit 기능도 React/FastAPI로 이관됐고 Streamlit은 제거됐다
+(현재: Frontend = React, Backend = FastAPI, Streamlit = removed). 구 설정 마법사는 이관 없이 Streamlit과 함께 삭제됐다.
 
 ---
 
@@ -189,7 +190,7 @@ Windows 작업: `\블로그1회예약` 삭제됨(2026-10-04). 프로젝트 Task�
 - HARDEN-04 (AI 비용 엔드포인트 확인 절차)
 - HARDEN-05 (대시보드 캐시가 GET 중 Sheets 조회)
 - 계산기 품질 작업(B-1~B-6) 채택 여부
-- Streamlit 삭제, 프론트엔드 untracked 정리, 전체 대시보드 정리
+- ~~Streamlit 삭제~~(완료: `6c9f78c`, legacy 정리 `4c97f08`), 프론트엔드 untracked 정리, 전체 대시보드 정리
 
 ## 7. 다음 단계 최소 수정 후보 (미구현)
 
