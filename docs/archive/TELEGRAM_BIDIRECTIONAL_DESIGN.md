@@ -8,7 +8,7 @@
 시스템 → telegram_ops.notify_*() → telegram_notifier.send() → Telegram Bot API(sendMessage) → 운영자
 ```
 - 발송 전용. 운영자가 텔레그램에서 **회신/명령**해도 시스템은 읽지 않음.
-- 키: `TELEGRAM_BOT_TOKEN`(secrets.yaml) + `TELEGRAM_CHAT_ID`(config.yaml).
+- 키: `TELEGRAM_BOT_TOKEN`(secrets.yaml) + `TELEGRAM_CHAT_ID`(secrets.yaml).
 - 이벤트 게이팅: `config.yaml > TELEGRAM_EVENTS`(error/budget/daily_summary/publish_request).
 
 ## 2. 목표(양방향)

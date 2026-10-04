@@ -203,7 +203,7 @@ class TestConfigLoader:
     def test_existing_secret_keys_intact(self):
         from modules.config_loader import SECRET_KEYS
         for key in ("OPENAI_API_KEY", "CLAUDE_API_KEY", "GEMINI_API_KEY",
-                    "WORDPRESS_APP_PASSWORD", "TELEGRAM_BOT_TOKEN"):
+                    "WORDPRESS_APP_PASSWORD", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
             assert key in SECRET_KEYS
 
 

@@ -30,6 +30,7 @@ SECRET_KEYS = (
     "WORDPRESS_APP_PASSWORD",
     "WORDPRESS_PASSWORD",     # 구 키(하위호환). _normalize가 APP_PASSWORD로 승격.
     "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_CHAT_ID",       # ab9ac26 보안 결정: tracked config.yaml이 아닌 secrets.yaml 소유.
 )
 
 

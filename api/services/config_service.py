@@ -69,13 +69,13 @@ GENERAL_SECRET_FIELDS = (
     "CLAUDE_API_KEY",
     "GEMINI_API_KEY",
     "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_CHAT_ID",   # ab9ac26 보안 결정 — secrets.yaml 소유, 원문 미반환
     "WORDPRESS_APP_PASSWORD",
 )
 # config.yaml에 남는 비-secret 필드(모두 top-level flat 키).
 GENERAL_PUBLIC_FIELDS = (
     "WORDPRESS_URL",
     "WORDPRESS_USERNAME",
-    "TELEGRAM_CHAT_ID",
     "DAILY_AI_BUDGET",
     "MONTHLY_AI_BUDGET",
     "AI_ROLES",
