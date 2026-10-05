@@ -357,9 +357,10 @@ loan-repayment-calculator:
   card_desc: 원리금균등상환 방식 대출 계산기
   difficulty: multi_output
   difficulty_status: provisional
-  status: HOLD
+  status: READY
   tier: 2
   source: app_factory
+  legal_requirement: NOT_REQUIRED
   content:
     evergreen: true
     update_cycle: null
@@ -376,11 +377,15 @@ loan-repayment-calculator:
   - id: formula_accuracy
     severity: critical
     label: 계산 공식 정확성
-    display_value: '코드 구현(custom compute): modules/app_generator.py _compute_js()의 loan-repayment-calculator 분기 — 원리금균등상환 월상환액 = P×r×(1+r)^n ÷ ((1+r)^n − 1), r = 연이율÷12÷100, n = 대출기간(년)×12(Math.pow 사용). 연이율 0%이면 월상환액 = P÷n, 총이자 0. 총상환액 = 월상환액×n, 총이자 = 총상환액 − P. DB formula 값(principal)은 placeholder이며 계산에 쓰이지 않음(modules/formula_engine.py CUSTOM_COMPUTE_SLUGS).'
+    display_value: '코드 구현(custom compute): modules/app_generator.py _compute_js()의
+      loan-repayment-calculator 분기 — 원리금균등상환 월상환액 = P×r×(1+r)^n ÷ ((1+r)^n − 1), r
+      = 연이율÷12÷100, n = 대출기간(년)×12(Math.pow 사용). 연이율 0%이면 월상환액 = P÷n, 총이자 0. 총상환액
+      = 월상환액×n, 총이자 = 총상환액 − P. DB formula 값(principal)은 placeholder이며 계산에 쓰이지 않음(modules/formula_engine.py
+      CUSTOM_COMPUTE_SLUGS).'
     auto_source: custom_compute_handler
-    checked: false
-    checked_by: null
-    checked_at: null
+    checked: true
+    checked_by: operator
+    checked_at: '2026-10-05T13:13:53Z'
   - id: legal_basis
     severity: advisory
     label: 법적 근거 (법령/조항)
@@ -392,11 +397,14 @@ loan-repayment-calculator:
   - id: input_validation_review
     severity: critical
     label: 입력값 검증 정책 확인
-    display_value: '코드 구현(custom compute): _compute_js() loan 분기 — 입력값이 유한수가 아니면(NaN/Infinity) 계산하지 않음(Number.isFinite), principal ≤ 0 · annual_rate < 0 · term_years ≤ 0이면 결과 없음(null, 빈 입력은 0으로 읽혀 이 조건에서 거부), 결과값(월상환액·총상환액·총이자)이 유한수가 아니면(overflow) null 반환. registry compute_rules는 없음 — 검증은 handler 내부에 구현됨.'
+    display_value: '코드 구현(custom compute): _compute_js() loan 분기 — 입력값이 유한수가 아니면(NaN/Infinity)
+      계산하지 않음(Number.isFinite), principal ≤ 0 · annual_rate < 0 · term_years ≤ 0이면
+      결과 없음(null, 빈 입력은 0으로 읽혀 이 조건에서 거부), 결과값(월상환액·총상환액·총이자)이 유한수가 아니면(overflow)
+      null 반환. registry compute_rules는 없음 — 검증은 handler 내부에 구현됨.'
     auto_source: custom_compute_handler
-    checked: false
-    checked_by: null
-    checked_at: null
+    checked: true
+    checked_by: operator
+    checked_at: '2026-10-05T13:13:53Z'
   - id: description_text
     severity: advisory
     label: 화면 안내문 확인
