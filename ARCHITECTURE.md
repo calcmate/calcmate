@@ -46,11 +46,11 @@ Pipeline            (활성 Platform + Feature 조합으로 자동 결정)
 │   파이프라인   cleaner·strategist·planner·writer·editor·            │
 │               duplicate_checker·image_generator·publisher·history   │
 │   수집기       collector/{policy,calculator,finance,affiliate,factory}│
-│   계산기엔진   formula_engine·calculator_form_engine·app_generator· │
+│   계산기엔진   formula_engine·app_generator· │
 │               calculator_{seo,faq,content,image_prompt}_generator·  │
 │               calculator_reviewer·calculator_pipeline·app_factory·  │
 │               github_deployer·internal_link_engine·site_mode_manager│
-│   운영/확장   scheduler·backup_manager·strategy_room·site_wizard·   │
+│   운영/확장   scheduler·backup_manager·strategy_room·ai_workspace·pipeline_status·dashboard_cache·         │
 │               ai_workspace·pipeline_status·dashboard_cache·         │
 │               ai_assistant·cost_manager·retry_queue·image_fallback· │
 │               telegram_ops·telegram_notifier                        │
@@ -93,7 +93,7 @@ STEP11 발행(publisher, WP 미구축 시 graceful skip) ▶ STEP12 기록(sheet
 ## 4. Calculator Workflow
 ```
 계산기 등록(seed/Wizard/App Factory)
-  ├ calculator_form_engine(입력폼)  ├ formula_engine(AST 안전 수식)
+  ├ formula_engine(AST 안전 수식)
   ▼
 calculator_content_generator.auto_generate_all()
   SEO → FAQ → 본문 → 이미지프롬프트

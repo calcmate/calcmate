@@ -82,7 +82,7 @@
 | `utils/parser.py` / `json_utils.py` | LLM JSON 파서 + shim |
 | `sheet_sync.py`·`db_manager.py`·`site_manager.py` | Repository 브릿지 |
 | `scheduler.py` | 슬롯/랜덤예약/실패모드3/즉시발행/요약 |
-| `setup_wizard.py`·`google_provisioner.py` | 6단계 마법사 + Sheets/Drive 자동생성 |
+| `google_provisioner.py` | Sheets/Drive 자동생성 |
 | `site_wizard.py` | 사이트/계산기 생성·관리(create_site/upsert 경로) |
 | `ai_assistant.py` | AI 운영비서(채팅+파일도구+승인게이트+메모리+태스크+분석) |
 | `ai_workspace.py` / `pipeline_status.py` / `dashboard_cache.py` | 대시보드 AI/파이프라인 상태/캐시 |
