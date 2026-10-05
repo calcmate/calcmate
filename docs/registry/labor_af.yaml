@@ -376,8 +376,8 @@ loan-repayment-calculator:
   - id: formula_accuracy
     severity: critical
     label: 계산 공식 정확성
-    display_value: principal
-    auto_source: formula_field
+    display_value: '코드 구현(custom compute): modules/app_generator.py _compute_js()의 loan-repayment-calculator 분기 — 원리금균등상환 월상환액 = P×r×(1+r)^n ÷ ((1+r)^n − 1), r = 연이율÷12÷100, n = 대출기간(년)×12(Math.pow 사용). 연이율 0%이면 월상환액 = P÷n, 총이자 0. 총상환액 = 월상환액×n, 총이자 = 총상환액 − P. DB formula 값(principal)은 placeholder이며 계산에 쓰이지 않음(modules/formula_engine.py CUSTOM_COMPUTE_SLUGS).'
+    auto_source: custom_compute_handler
     checked: false
     checked_by: null
     checked_at: null
@@ -392,8 +392,8 @@ loan-repayment-calculator:
   - id: input_validation_review
     severity: critical
     label: 입력값 검증 정책 확인
-    display_value: ⚠️ 설정된 입력값 검증 규칙 없음 — 의도적인지 확인 필요
-    auto_source: compute_rules_presence
+    display_value: '코드 구현(custom compute): _compute_js() loan 분기 — 입력값이 유한수가 아니면(NaN/Infinity) 계산하지 않음(Number.isFinite), principal ≤ 0 · annual_rate < 0 · term_years ≤ 0이면 결과 없음(null, 빈 입력은 0으로 읽혀 이 조건에서 거부), 결과값(월상환액·총상환액·총이자)이 유한수가 아니면(overflow) null 반환. registry compute_rules는 없음 — 검증은 handler 내부에 구현됨.'
+    auto_source: custom_compute_handler
     checked: false
     checked_by: null
     checked_at: null

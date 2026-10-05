@@ -625,12 +625,14 @@ def deploy_calculator(slug: str) -> dict:
             "build_result": None, "published_url": None,
         }
 
-    from modules.registry_loader import load_registry
-    auto_entry = load_registry(force=True).get(slug) or {}
-    if auto_entry.get("needs_human_legal"):
+    # 법률 게이트: v3 legal_requirement가 명시돼 있으면 그 분류로, 없으면 기존 needs_human_legal 규칙.
+    from modules.registry_loader import legal_gate
+    legal_ok, legal_reason, legal_explicit = legal_gate(slug, gate="deploy", force=True)
+    if not legal_ok:
         return {
             "ok": False, "slug": slug, "stage": "gate",
-            "blocked_reason": "🔒 needs_human_legal=true — 법적 근거 검토가 아직 완료되지 않았습니다.",
+            "blocked_reason": (f"🔒 {legal_reason}" if legal_explicit
+                               else "🔒 needs_human_legal=true — 법적 근거 검토가 아직 완료되지 않았습니다."),
             "build_result": None, "published_url": None,
         }
 

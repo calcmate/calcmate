@@ -181,6 +181,9 @@ def _build_v3_entry(app: dict, slug: str, tier: int = 2, contract: dict = None) 
         "status": "HOLD",
         "tier": tier,
         "source": "app_factory",
+        # 법률 분류(REQUIRED / NOT_REQUIRED / REVIEW) — 신규 계산기는 REVIEW로 시작하고,
+        # 운영자가 명시적으로 분류하기 전까지 promote_to_ready()와 article/deploy 게이트를 막는다.
+        "legal_requirement": "REVIEW",
         "content": {"evergreen": True, "update_cycle": None, "content_caveat": None},
         "related_slugs": [],
         "legal_refs": list(_c.get("legal_refs", []) or []),
@@ -298,6 +301,14 @@ def promote_to_ready(slug: str) -> tuple:
         if incomplete:
             return False, (f"🔴 필수 검토 항목 미완료 ({len(incomplete)}개): "
                            f"{incomplete} — 대시보드에서 체크 완료 후 재시도")
+
+    # 법률 분류가 명시된 엔트리만 검사(필드가 없는 기존 엔트리는 기존 동작 그대로).
+    # 체크리스트(기술 QA) 통과 후: REVIEW·REQUIRED+유효 legal_refs 없음 → 승격 차단.
+    if "legal_requirement" in entry:
+        from .registry_loader import evaluate_legal_requirement
+        legal_ok, legal_reason = evaluate_legal_requirement(entry, force=True)
+        if not legal_ok:
+            return False, f"⚖️ 법률 분류 미충족: {legal_reason}"
 
     category = entry.get("category", "")
     yaml_name = _category_to_af_yaml(category)

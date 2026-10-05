@@ -112,6 +112,60 @@ def find_impacted(entity_id: str, force: bool = False) -> list[str]:
             if eid in ((r or {}).get("legal_refs") or [])]
 
 
+# ── 법률 분류(legal_requirement) — needs_human_legal 게이트와 분리 ──────────
+# v3 App Factory 엔트리(docs/registry/*_af.yaml)에 명시적으로 기록된 경우에만 적용한다.
+# 필드가 없는 기존 계산기는 게이트별 기존 규칙(legacy)을 그대로 따른다 — article과
+# deploy는 기존 규칙이 서로 다르므로 하나의 공통 fallback으로 합치지 않는다.
+LEGAL_REQUIREMENT_VALUES = ("REQUIRED", "NOT_REQUIRED", "REVIEW")
+LEGAL_GATES = ("article", "deploy")
+
+
+def evaluate_legal_requirement(entry: dict, force: bool = False) -> tuple[bool, str]:
+    """명시적 legal_requirement 판정 → (cleared, reason).
+    REQUIRED는 legal_refs가 1개 이상이고 모두 legal_master에서 해석될 때만 통과.
+    REVIEW·허용되지 않은 값은 통과하지 않는다."""
+    value = (entry or {}).get("legal_requirement")
+    if value == "NOT_REQUIRED":
+        return True, "legal_requirement=NOT_REQUIRED"
+    if value == "REQUIRED":
+        refs = (entry or {}).get("legal_refs") or []
+        if not isinstance(refs, list) or not refs:
+            return False, "legal_requirement=REQUIRED이나 legal_refs가 없습니다"
+        master = load_legal_master(force=True) if force else load_legal_master()
+        missing = [r for r in refs if not isinstance(r, str) or r not in master]
+        if missing:
+            return False, f"legal_requirement=REQUIRED이나 legal_master에 없는 legal_refs: {missing}"
+        return True, f"legal_requirement=REQUIRED (legal_refs {len(refs)}개 확인)"
+    if value == "REVIEW":
+        return False, "legal_requirement=REVIEW — 법률 분류 검토가 완료되지 않았습니다"
+    return False, f"허용되지 않은 legal_requirement 값: {value!r}"
+
+
+def legal_gate(slug: str, gate: str, force: bool = False) -> tuple[bool, str, bool]:
+    """게이트별 법률 판정 → (cleared, reason, explicit).
+    explicit=True: v3 엔트리에 legal_requirement가 있어 분류로 판정함.
+    explicit=False: 기존 규칙 — article: needs_human_legal AND law/article/authority 전부 공백이면 차단,
+                     deploy: needs_human_legal이면 차단."""
+    if gate not in LEGAL_GATES:
+        raise ValueError(f"알 수 없는 legal gate: {gate!r}")
+    v3_entry = (load_registry_v3(force=True) if force else load_registry_v3()).get(slug) or {}
+    if "legal_requirement" in v3_entry:
+        cleared, reason = evaluate_legal_requirement(v3_entry, force)
+        return cleared, reason, True
+    lb = (load_registry(force=True) if force else load_registry()).get(slug) or {}
+    if gate == "article":
+        blocked = (isinstance(lb, dict) and bool(lb.get("needs_human_legal"))
+                   and not (lb.get("law") or lb.get("article") or lb.get("authority")))
+    else:
+        blocked = bool(lb.get("needs_human_legal"))
+    return (not blocked), ("needs_human_legal" if blocked else "legacy"), False
+
+
+def legal_cleared(slug: str, gate: str, force: bool = False) -> bool:
+    """legal_gate()의 통과 여부만 반환."""
+    return legal_gate(slug, gate, force)[0]
+
+
 def calculator_name(slug: str) -> str:
     """slug → 사람 가독 이름(registry.name). 없으면 slug 그대로(알림 표기용)."""
     r = load_registry_v3().get(slug) or {}

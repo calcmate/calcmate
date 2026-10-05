@@ -390,9 +390,11 @@ def run_calculator_once(cfg: dict, max_count: int = None, only_cid: str = None, 
             #   trigger: BLOCK_UNVERIFIED_LEGAL=true AND needs_human_legal+실제 legal 공백.
             #   idempotent: 이미 legal-HOLD 이력(sentinel) 있으면 재기록 없이 스킵.
             #   해제: 사람이 legal_basis.draft.yaml에 legal 채우면 _legal_unverified=False → 이 게이트 통과.
+            #   v3 엔트리에 legal_requirement가 명시된 계산기는 그 분류로 판정한다(legal_gate,
+            #   필드가 없으면 위 기존 규칙 그대로).
             if block_unverified and cid:
-                _lb = _load_legal_basis().get(str(calc.get("slug", "")).strip())
-                if _lb and _legal_unverified(_lb):
+                from .registry_loader import legal_cleared
+                if not legal_cleared(str(calc.get("slug", "")).strip(), gate="article"):
                     if art_repo.has_quality_hold(cid, prompt_version=_LEGAL_HOLD_VERSION, rows=snapshot):
                         stats["hold_skip"] += 1
                         LOG.info("[HOLD스킵] %s (cid=%s)", keyword, cid)
