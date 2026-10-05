@@ -11,6 +11,7 @@ on:
       - "modules/**"
       - "content/**"
       - "tests/**"
+      - "templates/library/**"
       - "requirements.txt"
       - ".github/workflows/ci.yml"
 
