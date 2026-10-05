@@ -218,38 +218,6 @@ bmi-calculator:
     evergreen: null
     update_cycle: null
   related_slugs: []
-simple-interest-calculator:
-  slug: simple-interest-calculator
-  name: 단리 이자 계산기
-  category: 금융/이자
-  emoji: 🧮
-  card_label: 단리 이자 계산기
-  compute_type: single
-  date_fields: []
-  validation_mode: formula
-  field_labels:
-    principal: 대출원금
-    annual_rate: 연이율
-    term_years: 대출기간(년)
-    interest: 이자
-  difficulty: simple
-  difficulty_status: provisional
-  needs_human_legal: true
-  law: null
-  article: null
-  authority: null
-  related_articles: []
-  writer_note: null
-  reviewer_expectation: []
-  forbidden_articles: []
-  forbidden_phrases: []
-  confidence: null
-  last_verified: null
-  verification_source: []
-  content:
-    evergreen: null
-    update_cycle: null
-  related_slugs: []
 loan-repayment-calculator:
   slug: loan-repayment-calculator
   name: 대출 상환 계산기
