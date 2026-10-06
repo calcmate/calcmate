@@ -408,12 +408,18 @@ def generate_index(cfg: dict) -> str:
     # 계산기 목록: registry v3 display_order 기준 정렬, card_desc는 v3 단일 소스
     from modules.app_generator import _registry
     from modules.registry_loader import load_registry_v3
+    from adapters.db.factory import get_calculator_storage_adapter
+    from repositories.calculator_repository import CalculatorRepository
     reg = _registry()
     _v3 = load_registry_v3()
+    # DB에서 active 상태인 계산기만 조회
+    _repo = CalculatorRepository(get_calculator_storage_adapter(cfg))
+    _db_calcs = {c.get("slug"): c.get("status") for c in _repo.get_all()}
     # status=HOLD(App Factory 생성 후 legal 미검증)는 공개 카드 제외
+    # DB status가 active인 계산기만 공개
     _slugs = [s for s, _ in sorted(
         [(s, e.get("display_order", 999)) for s, e in _v3.items()
-         if reg.get(s) and e.get("status") != "HOLD"],
+         if reg.get(s) and e.get("status") != "HOLD" and _db_calcs.get(s) == "active"],
         key=lambda x: x[1],
     )]
     _calc_card_html = []
