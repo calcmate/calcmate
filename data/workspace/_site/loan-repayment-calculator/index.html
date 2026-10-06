@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#2563EB">
+<meta name="naver-site-verification" content="de4ad3f1575284b5a8ea58baab7bc7a77b7cf07e">
+<meta name="description" content="대출 원금, 연이율, 기간을 입력하여 월상환액과 총상환액, 총이자를 계산해보세요. 금융 계획에 도움을 드립니다.">
+<title>대출 상환 계산기 - 월별 납부액 확인</title>
+<link rel="canonical" href="https://calcmate.kr/loan-repayment-calculator/">
+<link rel="stylesheet" href="style.css">
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-EP2Q8035VF"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag("js",new Date());gtag("config","G-EP2Q8035VF");</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "누가 대출 상환을 받을 수 있나요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "대출 상환은 대출 계약을 체결한 차입자와 대출금 지급 기관 간의 합의에 따라 실행됩니다. 대출금 지급 이후 차입자는 매월 정해진 금액을 상환해야 하며, 이는 대출의 이율 및 기간에 따라 결정됩니다."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "누가 대출 상환을 받지 못하나요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "대출금 상환이 불가능한 경우는 이자나 원금 상환 지연이 발생한 경우로, 특히 연체가 발생하면 연체 이자가 부과됩니다. 또한, 대출금의 목적이나 사용이 다를 경우에도 상환이 거부될 수 있습니다."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "대출 상환 금액은 어떻게 계산하나요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "대출 상환 금액은 대출원금에 대한 이율과 대출기간을 고려하여 계산합니다. 정확한 월상환액은 대출원금 × (연이율 ÷ 1200) × (1 + 연이율 ÷ 1200)^(대출기간 × 12) ÷ [(1 + 연이율 ÷ 1200)^(대출기간 × 12) - 1] 형식으로 계산됩니다."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "대출 상환에서 자주 발생하는 실수는 무엇인가요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "가장 흔한 오해는 원금과 이자의 비율을 잘못 이해하는 것입니다. 대출 초기에는 이자가 많고 원금이 적게 상환되므로, 초기 몇 개월 동안의 지불 금액을 기준으로 큰 그림을 보지 않으면 잘못된 판단을 할 수 있습니다."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "대출 상환의 법적 근거는 무엇인가요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "대출 상환에 대한 법적 근거는 민법 제 405조와 제 406조에 명시되어 있습니다. 여기서는 채무자가 채무를 이행해야 할 의무 및 이행 불능 시의 책임에 대해 설명하고 있습니다."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "대출 상환 시 주의해야 할 점은 무엇인가요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "대출 상환을 진행할 때는 매월 상환 날짜를 잊지 않고 지정된 금액을 정확히 납부하는 것이 중요합니다. 연체가 발생할 경우 높은 이자 및 추가 비용이 발생할 수 있으므로, 자동이체 설정이나 알림 기능을 사용하는 것이 좋습니다."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "대출 상환 중 추가 상환이 가능한가요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "대출 상환 중에는 추가 상환이 가능합니다. 그러나 일부 대출 상품에서는 중도상환 수수료가 부과될 수 있으니, 사전에 대출 약관을 확인하는 것이 중요합니다."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "상환 기간을 단축할 수 있는 방법은 무엇인가요?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "대출 상환 기간을 단축하려면 월상환액을 높이거나, 추가 상환을 진행하는 것이 가능합니다. 이 경우 총 이자를 절감할 수 있으므로 계획적으로 활용할 수 있습니다."
+      }
+    }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  "name": "CalcMate",
+  "url": "https://calcmate.kr",
+  "description": "CalcMate — 실생활 계산기 모음. 필요한 계산을 쉽고 빠르게, 한곳에서 확인하세요."
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "CalcMate",
+      "item": "https://calcmate.kr"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "금융/대출",
+      "item": "https://calcmate.kr/#calculators"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "대출 상환 계산기",
+      "item": "https://calcmate.kr/loan-repayment-calculator/"
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<div class="sm-wrap">
+
+  <!-- ① Hero -->
+  <header class="sm-hero">
+        <nav class="sm-hero-nav" aria-label="사이트 내비게이션">
+      <a class="sm-hero-nav-link" href="https://calcmate.kr/">홈</a>
+      <a class="sm-hero-nav-link" href="https://calcmate.kr/#calculators">계산기 목록</a>
+    </nav>
+    <div class="sm-hero-badge">🧮 금융/대출</div>
+    <h1>대출 상환 계산기</h1>
+    <p class="sm-hero-sub">대출 원금, 연이율, 기간을 입력하여 월상환액과 총상환액, 총이자를 계산해보세요. 금융 계획에 도움을 드립니다.</p>
+  </header>
+
+  <!-- ② 계산 입력 -->
+  <section class="sm-card" aria-label="계산 입력">
+    <h2 class="sm-card-title">계산 입력</h2>
+    <div class="sm-field"><label class="sm-label" for="in_principal">principal</label><div class="sm-input-wrap"><input class="sm-input" type="text" inputmode="numeric" data-comma id="in_principal" name="in_principal" placeholder="예) 0"></div></div>
+<div class="sm-field"><label class="sm-label" for="in_annual_rate">annual rate</label><div class="sm-input-wrap"><input class="sm-input" type="text" inputmode="numeric" data-comma id="in_annual_rate" name="in_annual_rate" placeholder="예) 0"></div></div>
+<div class="sm-field"><label class="sm-label" for="in_term_years">term years</label><div class="sm-input-wrap"><input class="sm-input" type="text" inputmode="numeric" data-comma id="in_term_years" name="in_term_years" placeholder="예) 0"></div></div>
+    <button class="sm-btn" type="button" onclick="calculate()">대출 상환 계산하기</button>
+  </section>
+
+  <!-- ③ 결과 카드 -->
+  <div class="sm-result-card" id="result-card" role="region" aria-label="계산 결과" aria-live="polite">
+    <div class="sm-result-label">예상 monthly payment</div>
+    <div>
+      <span class="sm-result-value" id="out_monthly_payment">-</span>
+      <span class="sm-result-unit">원</span>
+    </div>
+    <div class="sm-result-extra">
+      <div class="sm-result-extra-row"><span class="sm-result-extra-label">total payment</span><span><span class="sm-result-extra-value" id="out_total_payment">-</span><span class="sm-result-extra-unit">원</span></span></div>
+      <div class="sm-result-extra-row"><span class="sm-result-extra-label">total interest</span><span><span class="sm-result-extra-value" id="out_total_interest">-</span><span class="sm-result-extra-unit">원</span></span></div>
+    </div>
+    <div class="sm-result-sub" id="result-formula"></div>
+    <!-- ③-CTA: 결과 하단 CTA (정적, Phase D에서 개인화) -->
+        <div id="sm-result-cta" class="sm-result-cta">
+      <p class="sm-result-cta-text">더 알아보기</p>
+      <div class="sm-result-cta-links"><a class="sm-result-cta-link" href="https://calcmate.kr/">전체 계산기 보기</a></div>
+    </div>
+  </div>
+
+  <!-- ④ 결과 액션 버튼 (계산 후에만 표시) -->
+  <div class="sm-result-actions" id="result-actions">
+    <button class="sm-action-btn" type="button" data-action="result_save" onclick="saveResultPng()">
+      <span class="sm-action-icon" aria-hidden="true">📄</span>결과 저장
+    </button>
+    <button class="sm-action-btn" type="button" data-action="share" onclick="kakaoShare()">
+      <span class="sm-action-icon" aria-hidden="true">💬</span>카카오 공유
+    </button>
+    <button class="sm-action-btn" type="button" data-action="pwa" id="pwa-btn" onclick="pwaInstall()">
+      <span class="sm-action-icon" aria-hidden="true">📱</span>홈 화면 추가
+    </button>
+  </div>
+
+  <!-- ⑤ Notices: 계산 결과 안내 메시지 (JS가 동적으로 채움) -->
+  <div class="sm-notices" id="notices-container" role="status" aria-label="계산 결과 안내"></div>
+
+  <!-- ⑥ 계산 과정 보기 (Phase C: step accordion, JS가 채움) -->
+  <section class="sm-card" id="steps-card" style="display:none" aria-label="계산 과정">
+    <h2 class="sm-card-title">계산 과정 보기</h2>
+    <div id="steps-list"></div>
+  </section>
+
+  <!-- ⑦ 기존 계산 상세 (steps-card 없는 계산기 폴백) -->
+  <section class="sm-card" id="detail-card" style="display:none" aria-label="계산 상세">
+    <h2 class="sm-card-title">계산 상세</h2>
+    <div id="detail-rows"></div>
+  </section>
+
+  <!-- ⑧ 안내사항 -->
+  <div class="sm-notice" role="note">
+    <span class="sm-notice-icon" aria-hidden="true">⚠️</span>
+    <span>본 계산 결과는 참고용이며, 실제 지급액은 근로계약·관련 법령에 따라 달라질 수 있습니다.</span>
+  </div>
+
+
+
+  <!-- ⑧ 본문 -->
+  <section class="sm-card sm-article">
+    <h2>계산 원리</h2>
+<p>대출 상환 계산의 원리는 주어진 대출원금과 연이율, 대출기간을 바탕으로, 원리금을 균등하게 나누어 상환하는 방식으로 진행됩니다. 대출 상환 시 적용되는 공식은 대출금에 이자를 덧붙여 매달 납부해야 하는 금액을 도출하는 데 사용됩니다. 이 공식의 유래는 금융 분야에서의 이자 계산 방식에 뿌리를 두고 있으며, 대출금의 문제를 해결하기 위한 수학적 모델로 발전하였습니다.</p>
+
+<h2>계산 방법</h2>
+<p>대출 상환액 계산 과정은 다음과 같습니다:</p>
+<ol>
+    <li>대출원금(예: 1,000만원)과 연이율(예: 5%)을 준비합니다.</li>
+    <li>대출기간을 연 단위로 입력합니다 (예: 3년).</li>
+    <li>해당 정보를 바탕으로 월 상환액 계산식을 적용합니다.</li>
+    <li>계산된 월 상환액을 바탕으로 전체 상환액과 총 이자를 도출합니다.</li>
+</ol>
+
+<h2>계산 예시</h2>
+<p>예를 들어, 대출원금이 1,000만원, 연이율이 5%, 대출기간이 3년인 경우를 가정해 보겠습니다. 이러한 값으로 계산 시, 월 상환액은 약 29만원, 총상환액은 1,040만원, 총이자는 40만원이 됩니다.</p>
+
+<h2>주의사항</h2>
+<p>대출금 상환 시 주의해야 할 점은 다음과 같습니다:</p>
+<ul>
+    <li>대출 이자율의 변동을 감안해야 하며, 고정금리와 변동금리의 차이를 이해해야 합니다.</li>
+    <li>월 이자와 연 이자를 혼동하는 경우가 많으므로 명확한 계산 방식을 적용해야 합니다.</li>
+    <li>상환 방식에 따라 원리금 균등상환과 거치식 상환의 차이를 잘 이해해야 합니다.</li>
+    <li>조기상환 시 발생할 수 있는 수수료를 반드시 확인해야 합니다.</li>
+</ul>
+
+<h2>FAQ</h2>
+<dl>
+    <dt>대출 상환금을 받기 위한 지급 조건은 무엇인가요?</dt>
+    <dd>대출 상환금은 대출을 받은 개인이나 기업이 해당 대출 계약의 조건에 따라, 매월 또는 계약된 시점에 지급해야 합니다. 특히, 대출이 실행된 후 첫 번째 상환일 전까지 반드시 원금과 이자를 포함하여 상환해야 합니다.</dd>
+    
+    <dt>어떤 경우에 대출 상환금을 받지 못할 수 있나요?</dt>
+    <dd>대출 상환금을 받지 못하는 경우는 대출을 연체하거나, 대출계약의 조건을 위반하는 경우입니다. 또한, 개인회생이나 파산신청 중인 경우도 상환이 제한될 수 있습니다.</dd>
+    
+    <dt>대출 상환금은 어떻게 계산하나요?</dt>
+    <dd>대출 상환금은 대출원금에 연이율을 적용한 후, 대출기간에 따라 월 상환액을 계산합니다. 예를 들어, 대출원금이 1,000만원, 연이율이 5%, 대출기간이 3년일 경우 월 상환액은 약 29만원입니다.</dd>
+    
+    <dt>대출 상환금 계산 시 흔히 틀리는 부분은 무엇인가요?</dt>
+    <dd>흔히 월 이자와 연 이자를 혼동하거나, 대출기간을 잘못 계산하는 경우입니다. 또한, 상환방식에 따라 원리금 균등상환과 거치식 상환의 차이를 이해하지 못해 오해할 수 있습니다.</dd>
+    
+    <dt>어떤 법적 근거로 대출 상환 의무가 발생하나요?</dt>
+    <dd>대출 상환 의무는 민법 제 3장 제 3절의 계약에 의거하여 발생하며, 대출계약서에 명시된 약정 조건을 따릅니다. 또한 금융업 관련 법령도 적용됩니다.</dd>
+</dl>
+  </section>
+
+  <!-- Phase C: 본문 중간 CTA -->
+  <div class="sm-inline-cta">
+    <p class="sm-inline-cta-title">지금 바로 대출 상환 계산해 보세요</p>
+    <p class="sm-inline-cta-sub">무료 · 회원가입 불필요 · 결과 즉시 확인</p>
+    <a class="sm-inline-cta-btn" href="#" onclick="window.scrollTo({top:0,behavior:'smooth'});return false;">계산 바로 하기 ↑</a>
+  </div>
+
+
+
+  <!-- ⑨ FAQ -->
+  <section class="sm-card" id="faq-card">
+    <h2 class="sm-card-title">자주 묻는 질문</h2>
+    <div id="sm-dynamic-faq"></div>
+    <div class="sm-faq-item"><button class="sm-faq-q" onclick="toggleFaq(this)">누가 대출 상환을 받을 수 있나요?<span class="sm-faq-icon">+</span></button><div class="sm-faq-a">대출 상환은 대출 계약을 체결한 차입자와 대출금 지급 기관 간의 합의에 따라 실행됩니다. 대출금 지급 이후 차입자는 매월 정해진 금액을 상환해야 하며, 이는 대출의 이율 및 기간에 따라 결정됩니다.</div></div>
+<div class="sm-faq-item"><button class="sm-faq-q" onclick="toggleFaq(this)">누가 대출 상환을 받지 못하나요?<span class="sm-faq-icon">+</span></button><div class="sm-faq-a">대출금 상환이 불가능한 경우는 이자나 원금 상환 지연이 발생한 경우로, 특히 연체가 발생하면 연체 이자가 부과됩니다. 또한, 대출금의 목적이나 사용이 다를 경우에도 상환이 거부될 수 있습니다.</div></div>
+<div class="sm-faq-item"><button class="sm-faq-q" onclick="toggleFaq(this)">대출 상환 금액은 어떻게 계산하나요?<span class="sm-faq-icon">+</span></button><div class="sm-faq-a">대출 상환 금액은 대출원금에 대한 이율과 대출기간을 고려하여 계산합니다. 정확한 월상환액은 대출원금 × (연이율 ÷ 1200) × (1 + 연이율 ÷ 1200)^(대출기간 × 12) ÷ [(1 + 연이율 ÷ 1200)^(대출기간 × 12) - 1] 형식으로 계산됩니다.</div></div>
+<div class="sm-faq-item"><button class="sm-faq-q" onclick="toggleFaq(this)">대출 상환에서 자주 발생하는 실수는 무엇인가요?<span class="sm-faq-icon">+</span></button><div class="sm-faq-a">가장 흔한 오해는 원금과 이자의 비율을 잘못 이해하는 것입니다. 대출 초기에는 이자가 많고 원금이 적게 상환되므로, 초기 몇 개월 동안의 지불 금액을 기준으로 큰 그림을 보지 않으면 잘못된 판단을 할 수 있습니다.</div></div>
+<div class="sm-faq-item"><button class="sm-faq-q" onclick="toggleFaq(this)">대출 상환의 법적 근거는 무엇인가요?<span class="sm-faq-icon">+</span></button><div class="sm-faq-a">대출 상환에 대한 법적 근거는 민법 제 405조와 제 406조에 명시되어 있습니다. 여기서는 채무자가 채무를 이행해야 할 의무 및 이행 불능 시의 책임에 대해 설명하고 있습니다.</div></div>
+<div class="sm-faq-item"><button class="sm-faq-q" onclick="toggleFaq(this)">대출 상환 시 주의해야 할 점은 무엇인가요?<span class="sm-faq-icon">+</span></button><div class="sm-faq-a">대출 상환을 진행할 때는 매월 상환 날짜를 잊지 않고 지정된 금액을 정확히 납부하는 것이 중요합니다. 연체가 발생할 경우 높은 이자 및 추가 비용이 발생할 수 있으므로, 자동이체 설정이나 알림 기능을 사용하는 것이 좋습니다.</div></div>
+<div class="sm-faq-item"><button class="sm-faq-q" onclick="toggleFaq(this)">대출 상환 중 추가 상환이 가능한가요?<span class="sm-faq-icon">+</span></button><div class="sm-faq-a">대출 상환 중에는 추가 상환이 가능합니다. 그러나 일부 대출 상품에서는 중도상환 수수료가 부과될 수 있으니, 사전에 대출 약관을 확인하는 것이 중요합니다.</div></div>
+<div class="sm-faq-item"><button class="sm-faq-q" onclick="toggleFaq(this)">상환 기간을 단축할 수 있는 방법은 무엇인가요?<span class="sm-faq-icon">+</span></button><div class="sm-faq-a">대출 상환 기간을 단축하려면 월상환액을 높이거나, 추가 상환을 진행하는 것이 가능합니다. 이 경우 총 이자를 절감할 수 있으므로 계획적으로 활용할 수 있습니다.</div></div>
+  </section>
+
+  <!-- ⑩ 관련 계산기 -->
+  <section class="sm-card" id="related-card">
+    <h2 class="sm-card-title">관련 계산기</h2>
+    <div class="sm-related-grid">
+      
+    </div>
+  </section>
+
+
+
+
+
+  <!-- Phase C: 페이지 하단 CTA -->
+  <div class="sm-footer-cta">
+    <p class="sm-footer-cta-title">CalcMate — 실생활 계산기 모음</p>
+    <p class="sm-footer-cta-sub">필요한 계산을 쉽고 빠르게, 한곳에서 확인하세요.</p>
+    <div class="sm-footer-cta-links">
+      <a class="sm-footer-cta-link" href="https://calcmate.kr">전체 계산기</a>
+      <a class="sm-footer-cta-link" href="https://calcmate.kr">다른 계산기 보기</a>
+    </div>
+  </div>
+
+
+  <!-- ⑫ Footer -->
+  <footer style="text-align:center;padding-top:var(--sp-3);border-top:1px solid var(--c-border);margin-top:var(--sp-3)">
+    <p style="font-size:13px;color:var(--c-text-light);margin-bottom:var(--sp-1)">본 계산기는 참고용이며 실제 지급액과 다를 수 있습니다.</p>
+    <div style="font-size:16px;font-weight:800;color:var(--c-primary);margin-bottom:var(--sp-1)">CalcMate</div>
+    <nav style="display:flex;gap:var(--sp-2);justify-content:center;flex-wrap:wrap;margin-bottom:var(--sp-1)"><a href="https://calcmate.kr/about/" style="font-size:13px;color:var(--c-text-sub);text-decoration:none">소개</a><a href="https://calcmate.kr/privacy/" style="font-size:13px;color:var(--c-text-sub);text-decoration:none">개인정보처리방침</a><a href="https://calcmate.kr/terms/" style="font-size:13px;color:var(--c-text-sub);text-decoration:none">이용약관</a><a href="https://calcmate.kr/contact/" style="font-size:13px;color:var(--c-text-sub);text-decoration:none">문의하기</a></nav>
+    <p style="font-size:12px;color:var(--c-text-light)">© 2026 CalcMate. All rights reserved.</p>
+  </footer>
+
+</div>
+
+<!-- Mobile Fixed CTA -->
+<div class="sm-mobile-cta">
+  <button class="sm-btn" type="button" onclick="calculate();setTimeout(function(){var c=document.getElementById('result-card');if(c)c.scrollIntoView({behavior:'smooth',block:'center'});},100)">
+    지금 계산하기
+  </button>
+</div>
+
+<!-- 계산기 설정(파라미터) — app_generator가 주입 -->
+<script>window.SM_CONFIG = {"name": "대출 상환 계산기", "slug": "loan-repayment-calculator", "primaryOutput": "monthly_payment", "resultUnit": "원", "inputs": [{"name": "principal", "label": "principal", "type": "number", "unit": ""}, {"name": "annual_rate", "label": "annual rate", "type": "number", "unit": ""}, {"name": "term_years", "label": "term years", "type": "number", "unit": ""}], "outputs": [{"key": "monthly_payment", "label": "monthly payment", "unit": "원"}, {"key": "total_payment", "label": "total payment", "unit": "원"}, {"key": "total_interest", "label": "total interest", "unit": "원"}], "show_adsense": false, "show_cpa": false, "show_share": true, "show_pwa": false, "show_result_save": true, "show_faq": true, "show_notice": true, "show_related": true, "show_detail": true, "show_article": true, "site_mode": "cpa", "result_export_type": "pdf", "kakao_js_key": "test_key", "calculator_version": "3.0.0", "law_version": "2027-01", "ga4_id": "G-EP2Q8035VF"};</script>
+<script src="script.js"></script>
+</body>
+</html>

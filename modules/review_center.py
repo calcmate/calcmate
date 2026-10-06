@@ -40,6 +40,7 @@ CODE_BASED_SLUGS = frozenset({
     # 안전식 평가기가 거부(_formula_valid=False) — 실제 계산은 위 IRP와 동일한
     # slug 조건부 코드 분기(modules/app_generator.py)로 구현됨.
     "irp-tax-credit-v2",
+    "loan-repayment-calculator",
 })
 
 # STEP 28-208: 위 계산기들의 formula_accuracy/rate_constant display_value.
