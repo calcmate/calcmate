@@ -5,6 +5,7 @@ on:
     branches: [master]
     paths:
       - 'data/workspace/_site/**'
+      - 'modules/**'
       - '.github/workflows/deploy.yml'
 
 permissions:
