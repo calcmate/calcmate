@@ -1,0 +1,292 @@
+/* ============================================================
+   SalaryMate Design System v2.0 — design_system.css
+   (공식 마스터 디자인 — UI/색상/레이아웃 변경 금지)
+   ============================================================ */
+:root {
+  --c-primary:      #2563EB;
+  --c-primary-dark: #1D4ED8;
+  --c-primary-bg:   #EFF6FF;
+  --c-success:      #16A34A;
+  --c-warning:      #D97706;
+  --c-danger:       #DC2626;
+  --c-bg:           #F6F8FB;
+  --c-card:         #FFFFFF;
+  --c-border:       #EAECEF;
+  --c-text:         #111827;
+  --c-text-sub:     #6B7280;
+  --c-text-light:   #9CA3AF;
+  --r-card:   24px;
+  --r-input:  16px;
+  --r-btn:    18px;
+  --r-badge:  100px;
+  --sp-1: 8px; --sp-2: 16px; --sp-3: 24px; --sp-4: 32px; --sp-5: 48px;
+  --shadow-card: 0 2px 16px rgba(0,0,0,.07);
+  --shadow-btn:  0 4px 12px rgba(37,99,235,.25);
+  --t-result: 36px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,'Apple SD Gothic Neo','Pretendard','Noto Sans KR',sans-serif;background:var(--c-bg);color:var(--c-text);font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
+.sm-wrap{max-width:720px;margin:0 auto;padding:0 var(--sp-2) 120px}
+
+/* Hero */
+.sm-hero{padding:var(--sp-5) 0 var(--sp-3)}
+.sm-hero-nav{display:flex;gap:var(--sp-1);margin-bottom:var(--sp-2)}
+.sm-hero-nav-link{display:inline-flex;align-items:center;background:var(--c-primary-bg);color:var(--c-primary);font-size:13px;font-weight:600;padding:4px 12px;border-radius:var(--r-badge);text-decoration:none}
+.sm-hero-nav-link:hover{background:var(--c-primary);color:#fff}
+.sm-hero-nav-link:focus-visible{outline:3px solid var(--c-primary);outline-offset:2px}
+.sm-hero-badge{display:inline-flex;align-items:center;gap:6px;background:var(--c-primary-bg);color:var(--c-primary);font-size:13px;font-weight:600;padding:4px 12px;border-radius:var(--r-badge);margin-bottom:var(--sp-2)}
+.sm-hero h1{font-size:28px;font-weight:800;letter-spacing:-.5px;line-height:1.3;margin-bottom:6px}
+.sm-hero-sub{color:var(--c-text-sub);font-size:14px}
+
+/* Card */
+.sm-card{background:var(--c-card);border-radius:var(--r-card);padding:var(--sp-3);margin-bottom:var(--sp-2);box-shadow:var(--shadow-card);border:1px solid var(--c-border)}
+.sm-card-title{font-size:18px;font-weight:700;margin-bottom:var(--sp-2);letter-spacing:-.3px}
+
+/* Input */
+.sm-field{margin-bottom:var(--sp-2)}
+.sm-label{display:block;font-size:14px;font-weight:600;margin-bottom:8px}
+.sm-input-wrap{position:relative}
+.sm-input{width:100%;height:56px;padding:0 var(--sp-2);border:1.5px solid var(--c-border);border-radius:var(--r-input);font-size:16px;font-family:inherit;color:var(--c-text);background:var(--c-bg);transition:border-color .15s,box-shadow .15s;outline:none;-webkit-appearance:none}
+.sm-input:focus{border-color:var(--c-primary);box-shadow:0 0 0 3px rgba(37,99,235,.12);background:#fff}
+.sm-input::placeholder{color:var(--c-text-light)}
+.sm-unit{position:absolute;right:var(--sp-2);top:50%;transform:translateY(-50%);font-size:14px;color:var(--c-text-sub);pointer-events:none}
+
+/* Button */
+.sm-btn{width:100%;height:56px;border:none;border-radius:var(--r-btn);background:var(--c-primary);color:#fff;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer;letter-spacing:-.2px;box-shadow:var(--shadow-btn);transition:background .15s,transform .1s;margin-top:var(--sp-1)}
+.sm-btn:hover{background:var(--c-primary-dark)}
+.sm-btn:active{transform:scale(.98)}
+
+/* Result Card */
+.sm-result-card{background:linear-gradient(135deg,var(--c-primary) 0%,#1E40AF 100%);border-radius:var(--r-card);padding:var(--sp-3) var(--sp-3) var(--sp-4);margin-bottom:var(--sp-2);color:#fff;position:relative;overflow:hidden;display:none}
+.sm-result-card::before{content:'';position:absolute;top:-40px;right:-40px;width:180px;height:180px;background:rgba(255,255,255,.06);border-radius:50%}
+.sm-result-card.show{display:block;animation:fadeSlideUp .3s ease both}
+.sm-result-label{font-size:14px;font-weight:500;opacity:.8;margin-bottom:6px}
+.sm-result-value{font-size:var(--t-result);font-weight:800;letter-spacing:-1px;line-height:1.1}
+.sm-result-unit{font-size:20px;font-weight:500;opacity:.8;margin-left:4px}
+.sm-result-sub{margin-top:var(--sp-2);padding-top:var(--sp-2);border-top:1px solid rgba(255,255,255,.15);font-size:13px;opacity:.7}
+.sm-result-extra{margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.2)}
+.sm-result-extra-row{display:flex;justify-content:space-between;align-items:baseline;padding:3px 0;font-size:14px}
+.sm-result-extra-label{opacity:.8;font-weight:500}
+.sm-result-extra-value{font-weight:700;font-size:16px}
+.sm-result-extra-unit{font-size:13px;opacity:.75;margin-left:3px}
+
+/* Result Action Buttons */
+.sm-result-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--sp-1);margin-bottom:var(--sp-2);display:none}
+.sm-result-actions.show{display:grid}
+.sm-action-btn{display:flex;flex-direction:column;align-items:center;gap:6px;padding:var(--sp-2) var(--sp-1);background:var(--c-card);border:1.5px solid var(--c-border);border-radius:var(--r-input);cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;color:var(--c-text);transition:border-color .15s,background .15s}
+.sm-action-btn:hover{border-color:var(--c-primary);background:var(--c-primary-bg);color:var(--c-primary)}
+.sm-action-icon{font-size:22px}
+
+/* Result Detail */
+.sm-detail-row{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--c-border);font-size:14px}
+.sm-detail-row:last-child{border-bottom:none}
+.sm-detail-label{color:var(--c-text-sub)}
+.sm-detail-value{font-weight:600}
+
+/* Notice */
+.sm-notice{background:#FFFBEB;border:1px solid #FDE68A;border-radius:var(--r-input);padding:var(--sp-2);display:flex;gap:10px;font-size:14px;color:#92400E;margin-bottom:var(--sp-2)}
+.sm-notice-icon{font-size:18px;flex-shrink:0;margin-top:1px}
+
+/* FAQ */
+.sm-faq-item{border-bottom:1px solid var(--c-border)}
+.sm-faq-item:last-child{border-bottom:none}
+.sm-faq-q{width:100%;background:none;border:none;padding:var(--sp-2) 0;display:flex;justify-content:space-between;align-items:center;font-size:14px;font-weight:600;font-family:inherit;color:var(--c-text);cursor:pointer;text-align:left;gap:var(--sp-2)}
+.sm-faq-icon{font-size:20px;color:var(--c-text-sub);transition:transform .2s;flex-shrink:0}
+.sm-faq-item.open .sm-faq-icon{transform:rotate(45deg)}
+.sm-faq-a{display:none;padding-bottom:var(--sp-2);font-size:14px;color:var(--c-text-sub);line-height:1.7}
+.sm-faq-item.open .sm-faq-a{display:block}
+
+/* Related */
+.sm-related-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--sp-1)}
+.sm-related-item{background:var(--c-bg);border:1.5px solid var(--c-border);border-radius:var(--r-input);padding:var(--sp-2);cursor:pointer;transition:border-color .15s,background .15s;text-decoration:none;display:block}
+.sm-related-item:hover{border-color:var(--c-primary);background:var(--c-primary-bg)}
+.sm-related-emoji{font-size:22px;margin-bottom:6px;display:block}
+.sm-related-name{font-size:13px;font-weight:600;color:var(--c-text)}
+
+/* Footer */
+.sm-foot{text-align:center;font-size:13px;color:var(--c-text-light);padding-top:var(--sp-3)}
+
+/* Mobile Fixed CTA */
+.sm-mobile-cta{position:fixed;bottom:0;left:0;right:0;padding:var(--sp-2) var(--sp-2) calc(var(--sp-2) + env(safe-area-inset-bottom));background:rgba(255,255,255,.95);backdrop-filter:blur(12px);border-top:1px solid var(--c-border);z-index:100}
+.sm-mobile-cta .sm-btn{margin-top:0;height:52px;font-size:16px}
+@media(min-width:700px){.sm-mobile-cta{display:none}}
+
+/* Animations */
+@keyframes fadeSlideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@media(max-width:480px){.sm-hero h1{font-size:24px}.sm-result-value{font-size:30px}}
+
+/* ── Site Mode: 광고/CPA 기본 숨김 (대시보드 show_* 설정으로만 노출) ── */
+.sm-adsense, .sm-cpa { display: none; }
+
+/* ══════════════════════════════════════════════════════════════
+   Phase C — UI/UX V2 추가 컴포넌트 (계산 로직 무관, Design Token 확장)
+   기존 토큰 변경 금지 — 새 토큰만 추가
+   ══════════════════════════════════════════════════════════════ */
+
+/* Phase C Design Token: #2C5AA0 딥블루 보조 팔레트 */
+:root {
+  --c-deep:     #2C5AA0;
+  --c-deep-dk:  #1E3F74;
+  --c-deep-bg:  #EBF1F9;
+  --c-step-bg:  #F0F5FF;
+}
+
+/* ── Phase C: 결과 카드 내 notices ── */
+.sm-notices { margin-top: var(--sp-2); display: none; }
+.sm-notices.show { display: block; }
+.sm-notice-item {
+  background: #FFFBEB; border: 1px solid #FDE68A;
+  border-radius: var(--r-input); padding: 10px var(--sp-2);
+  display: flex; gap: 10px; font-size: 13px; color: #92400E;
+  margin-bottom: 6px; align-items: flex-start;
+}
+.sm-notice-item:last-child { margin-bottom: 0; }
+.sm-notice-item-icon { font-size: 15px; flex-shrink: 0; margin-top: 1px; }
+
+/* ── Phase C: 결과 하단 CTA (결과 카드 내부) ── */
+.sm-result-cta {
+  margin-top: var(--sp-2); padding-top: var(--sp-2);
+  border-top: 1px solid rgba(255,255,255,.15);
+}
+.sm-result-cta-text { font-size: 12px; opacity: .75; margin-bottom: 6px; }
+.sm-result-cta-links { display: flex; gap: 8px; flex-wrap: wrap; }
+.sm-result-cta-link {
+  display: inline-block; padding: 7px 14px;
+  background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.35);
+  border-radius: 10px; color: #fff; font-size: 12px; font-weight: 600;
+  text-decoration: none; transition: background .15s;
+}
+.sm-result-cta-link:hover { background: rgba(255,255,255,.28); }
+
+/* ── Phase C: 본문 중간 CTA ── */
+.sm-inline-cta {
+  background: var(--c-deep-bg); border: 1.5px solid var(--c-deep);
+  border-radius: var(--r-card); padding: var(--sp-3);
+  margin-bottom: var(--sp-2); text-align: center;
+}
+.sm-inline-cta-title { font-size: 15px; font-weight: 700; color: var(--c-deep); margin-bottom: 6px; }
+.sm-inline-cta-sub { font-size: 13px; color: var(--c-text-sub); margin-bottom: var(--sp-2); }
+.sm-inline-cta-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 11px 22px; background: var(--c-deep); color: #fff;
+  border-radius: var(--r-btn); font-size: 14px; font-weight: 700;
+  text-decoration: none; transition: background .15s;
+}
+.sm-inline-cta-btn:hover { background: var(--c-deep-dk); }
+
+/* ── Phase C: 페이지 하단 CTA ── */
+.sm-footer-cta {
+  background: linear-gradient(135deg, var(--c-deep) 0%, var(--c-deep-dk) 100%);
+  border-radius: var(--r-card); padding: var(--sp-3);
+  margin-bottom: var(--sp-2); color: #fff; text-align: center;
+}
+.sm-footer-cta-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+.sm-footer-cta-sub { font-size: 13px; opacity: .8; margin-bottom: var(--sp-2); }
+.sm-footer-cta-links { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.sm-footer-cta-link {
+  padding: 10px 18px; background: rgba(255,255,255,.15);
+  border: 1px solid rgba(255,255,255,.35); border-radius: 12px;
+  color: #fff; font-size: 13px; font-weight: 600;
+  text-decoration: none; transition: background .15s;
+}
+.sm-footer-cta-link:hover { background: rgba(255,255,255,.28); }
+
+/* ── Phase C: 관련 글 카드 ── */
+.sm-posts-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--sp-1);
+}
+.sm-post-card {
+  background: var(--c-bg); border: 1.5px solid var(--c-border);
+  border-radius: var(--r-input); padding: var(--sp-2);
+  text-decoration: none; display: block;
+  transition: border-color .15s, background .15s;
+}
+.sm-post-card:hover { border-color: var(--c-primary); background: var(--c-primary-bg); }
+.sm-post-tag {
+  display: inline-block; font-size: 11px; font-weight: 600;
+  color: var(--c-primary); background: var(--c-primary-bg);
+  padding: 2px 8px; border-radius: var(--r-badge); margin-bottom: 6px;
+}
+.sm-post-title { font-size: 13px; font-weight: 600; color: var(--c-text); line-height: 1.5; }
+.sm-post-desc { font-size: 12px; color: var(--c-text-sub); margin-top: 4px; line-height: 1.5; }
+@media(max-width: 480px) { .sm-posts-grid { grid-template-columns: 1fr; } }
+
+/* ── Phase C: 계산 과정 보기 (Step Accordion) ── */
+.sm-steps-item { border-bottom: 1px solid var(--c-border); }
+.sm-steps-item:last-child { border-bottom: none; }
+.sm-steps-q {
+  width: 100%; background: none; border: none;
+  padding: 14px 0; display: flex; justify-content: space-between;
+  align-items: center; font-size: 14px; font-weight: 600;
+  font-family: inherit; color: var(--c-text); cursor: pointer;
+  text-align: left; gap: var(--sp-1); min-height: 44px;
+}
+.sm-steps-num {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; background: var(--c-primary-bg);
+  color: var(--c-primary); font-size: 11px; font-weight: 700;
+  border-radius: 50%; flex-shrink: 0;
+}
+.sm-steps-label { flex: 1; }
+.sm-steps-value {
+  font-size: 12px; color: var(--c-text-sub); font-weight: 500;
+  max-width: 130px; text-align: right; word-break: break-all;
+}
+.sm-steps-icon { font-size: 18px; color: var(--c-text-sub); transition: transform .2s; flex-shrink: 0; }
+.sm-steps-item.open .sm-steps-icon { transform: rotate(45deg); }
+.sm-steps-a {
+  padding: 0 0 14px 30px; font-size: 13px;
+  color: var(--c-text-sub); line-height: 1.7;
+  background: var(--c-step-bg); border-radius: 8px;
+  margin-bottom: 4px;
+}
+/* JS로 hidden 속성 제어, display 직접 조작하지 않음 */
+.sm-steps-a[hidden] { display: none; }
+.sm-steps-formula {
+  padding: var(--sp-1) var(--sp-2); font-size: 12px;
+  color: var(--c-text-sub); background: #F3F4F6;
+  border-radius: 8px; margin-top: 6px; word-break: break-all;
+}
+
+/* ── Phase C: Accessibility ── */
+.sm-btn:focus-visible { outline: 3px solid var(--c-primary); outline-offset: 2px; }
+.sm-action-btn:focus-visible { outline: 3px solid var(--c-primary); outline-offset: 2px; }
+.sm-faq-q:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; border-radius: 4px; }
+.sm-steps-q:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; border-radius: 4px; }
+.sm-related-item:focus-visible { outline: 3px solid var(--c-primary); outline-offset: 2px; }
+.sm-post-card:focus-visible { outline: 3px solid var(--c-primary); outline-offset: 2px; }
+.sm-inline-cta-btn:focus-visible { outline: 3px solid var(--c-primary); outline-offset: 2px; }
+.sm-footer-cta-link:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+
+/* 모바일 관련 계산기 1열 (작은 화면) */
+@media(max-width: 400px) { .sm-related-grid { grid-template-columns: 1fr; } }
+
+/* ── Phase E-5: Core Web Vitals — CLS 방지 ── */
+/* 동적 콘텐츠 영역 최소 높이 예약 (계산 전 빈 상태에서 레이아웃 이동 방지) */
+#sm-result-cta { min-height: 72px; }
+#sm-dynamic-faq { min-height: 0; }
+/* 이미지 크기 명시 (기본값) */
+.sm-article img { max-width: 100%; height: auto; }
+
+/* ── Phase E-6: AdSense 배치 최적화 ── */
+/* 슬롯 높이 예약 — CLS 방지, 승인 전에는 배경색으로 처리 */
+.sm-adsense {
+  min-height: 100px;
+  background: var(--c-bg);
+  border-radius: var(--r-card);
+  margin-bottom: var(--sp-2);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; color: var(--c-text-light);
+}
+.sm-adsense-2 {
+  min-height: 90px;
+}
+
+/* ── Phase E-4: 내부링크 스타일 ── */
+.sm-internal-link {
+  color: var(--c-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-weight: 500;
+}
+.sm-internal-link:hover { color: var(--c-primary-dark); }

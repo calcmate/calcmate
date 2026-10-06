@@ -90,6 +90,8 @@ _NOTICE_BY_SLUG: dict = {
     "자동차_취등록세_계산기": "본 계산 결과는 참고용이며, 실제 취득세는 차종·가격 및 관련 법령에서 정한 표준세율·감면에 따라 달라질 수 있습니다.",
     "연금저축_irp_세액공제_계산기": "본 계산 결과는 참고용이며, 실제 세액공제액은 납입액·소득 구간 및 관련 세법 적용에 따라 달라질 수 있습니다.",
     "irp-tax-credit-v2": "본 계산 결과는 참고용이며, 실제 세액공제액은 납입액·소득 구간 및 관련 세법 적용에 따라 달라질 수 있습니다.",
+    # 금융/대출 도메인 계산기 — 근로계약 fallback 방지
+    "loan-repayment-calculator": "본 계산 결과는 참고용이며, 실제 상환 조건은 금융기관별 상품 약관 및 관련 법령에 따라 달라질 수 있습니다.",
 }
 
 # Phase C: 계산기별 관련 글 데이터 (정적, 계산기 지원용 블로그 Set)
@@ -149,6 +151,14 @@ _RELATED_POSTS = {
         {"tag": "육아휴직", "title": "육아휴직 급여 신청 절차 — 서류부터 지급까지",
          "desc": "육아휴직 급여 신청에 필요한 서류, 신청 기한, 지급 일정을 단계별로 설명합니다.",
          "href": "/blog/parental-leave-benefit-apply/"},
+    ],
+    "loan-repayment-calculator": [
+        {"tag": "금융", "title": "대출 상환 방식 비교 — 원리금균등 vs 원금균등",
+         "desc": "원리금균등상환과 원금균등상환의 차이와 월 상환액 비교를 설명합니다.",
+         "href": "/blog/loan-repayment-comparison/"},
+        {"tag": "금융", "title": "자동차 구매 시 취득세 계산법 — 차종별 감면까지",
+         "desc": "자동차 취득세 계산 방법과 경차·전기차 감면 혜택을 안내합니다.",
+         "href": "/blog/car-acquisition-tax-guide/"},
     ],
 }
 
@@ -1812,6 +1822,7 @@ _CTA1 = {
     "연말정산_환급액_계산기":    ("4대보험도 계산해 보기",    "/four-insurances/"),
     "freelancer-tax-3p3":        ("연말정산도 계산해 보기",   "/연말정산_환급액_계산기/"),
     "annual-leave-remaining":    ("연차수당도 계산해 보기",   "/annual-leave-allowance/"),
+    "loan-repayment-calculator": ("자동차 취득세도 계산해 보기", "/자동차_취등록세_계산기/"),
 }
 
 
@@ -1927,6 +1938,8 @@ _FOOTER_DISCLAIMER_BY_SLUG: dict = {
     # 비노동 계산기 오염 방지
     "연말정산_환급액_계산기": "본 계산 결과는 참고용이며, 실제 환급액(또는 납부액)은 소득·공제 항목 및 관련 세법 적용에 따라 달라질 수 있습니다.",
     "육아휴직_급여_계산기": "본 계산 결과는 참고용이며, 정확한 정보는 관련 기관 또는 전문가에게 확인하시기 바랍니다.",
+    # 금융/대출 도메인 — 근로계약 fallback 방지
+    "loan-repayment-calculator": "본 계산 결과는 참고용이며, 실제 상환 조건은 금융기관별 상품 약관 및 관련 법령에 따라 달라질 수 있습니다.",
 }
 
 
@@ -2154,7 +2167,7 @@ def generate_calculator(calc: dict, cfg: dict = None) -> dict:
         # 분기조건은 registry(validation_mode) 유일 소스(Phase D: 슬러그 하드코딩 폴백 제거됨)
         ok, msg = True, "날짜기반 계산(코드 내장) — 수식 검증 제외"
     else:
-        ok, msg = validate_formula(formula, ins) if formula else (True, "수식 없음")
+        ok, msg = validate_formula(formula, ins, slug=_slug) if formula else (True, "수식 없음")
     # STEP 28-20: G-LEGAL-CURRENT(SSOT 기반 법정수치 최신성 검사)를 공통 진입점에 연결.
     # run_integrity_gates() 전체(G-CALC/G-NUMCON/G-LEGAL/G-CONSISTENCY 등)는 기존에
     # 검증된 적 없는 콘텐츠에서 무관한 항목까지 false positive를 내는 것을 확인해

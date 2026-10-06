@@ -350,9 +350,21 @@ loan-repayment-calculator:
   compute_type: dict
   date_fields: []
   validation_mode: formula
-  field_labels: {}
-  input_labels: []
-  output_labels: []
+  field_labels:
+    principal: 대출 원금 (원)
+    annual_rate: 연이율 (%)
+    term_years: 상환 기간 (년)
+    monthly_payment: 월 상환액 (원)
+    total_payment: 총 상환액 (원)
+    total_interest: 총 이자 (원)
+  input_labels:
+    - principal
+    - annual_rate
+    - term_years
+  output_labels:
+    - monthly_payment
+    - total_payment
+    - total_interest
   display_order: 16
   card_desc: 원리금균등상환 방식 대출 계산기
   difficulty: multi_output
@@ -416,8 +428,43 @@ loan-repayment-calculator:
   - id: seo_title
     severity: advisory
     label: SEO 제목 검토
-    display_value: 대출 상환 계산기
+    display_value: 대출 상환 계산기 - 월별 납부액 확인
     auto_source: seo_title_field
     checked: false
     checked_by: null
     checked_at: null
+  - id: schema_match
+    severity: critical
+    label: Schema 일치 확인 (Contract vs AI 생성)
+    display_value: ✅ Schema 일치 — 입력/출력 필드명이 Registry field_labels와 일치
+    auto_source: contract_schema_drift
+    checked: true
+    checked_by: operator
+    checked_at: '2026-10-06T03:50:00Z'
+  - id: faq_content
+    severity: advisory
+    label: FAQ 내용 검토
+    display_value: "['대출 상환 계산기는 어떻게 사용하나요?', '월 상환액은 어떻게 계산되나요?', '총 이자와 총 상환액의 차이는?', '중도상환수수료는 어떻게 적용되나요?', '0% 금리일 때 계산은 어떻게 되나요?', '대출 기간이 길수록 총 이자가 왜 늘어나나요?']"
+    auto_source: faq_field
+    checked: true
+    checked_by: operator
+    checked_at: '2026-10-06T03:50:00Z'
+  - id: description_text
+    severity: advisory
+    label: 화면 안내문 확인
+    display_value: 원리금균등상환 방식 대출 계산기
+    auto_source: description_field
+    checked: false
+    checked_by: null
+    checked_at: null
+  - id: seo_title
+    severity: advisory
+    label: SEO 제목 검토
+    display_value: 대출 상환 계산기 - 월별 납부액 확인
+    auto_source: seo_title_field
+    checked: false
+    checked_by: null
+    checked_at: null
+  compute_rules:
+    positive_inputs:
+      - principal
