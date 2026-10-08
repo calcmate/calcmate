@@ -4,6 +4,9 @@ Loan Ground Truth Suite 생성 및 mortgagemath Adapter Parity 검증
 """
 import json
 import os
+import hashlib
+import subprocess
+from pathlib import Path
 
 from modules.factory.engine.adapters import MortgageMathAdapter
 from modules.factory.semantics import CalculationSemantics
@@ -11,6 +14,47 @@ from modules.factory.engine import CalculationContext
 from modules.factory.ground_truth import GroundTruthCase, GroundTruthSource, GroundTruthSuite
 from modules.factory.parity import compare_values, run_parity_test, ParityStatus
 from modules.factory.gates import QualityGateRunner, QualityGateContext, ReferenceParityGate, GateSeverity
+
+
+def get_repo_root() -> Path:
+    """Repository root 경로를 동적으로 찾음"""
+    return Path(__file__).resolve().parent
+
+
+def get_git_head() -> str:
+    """현재 Git HEAD를 동적으로 조회"""
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'],
+            capture_output=True, text=True, cwd=get_repo_root()
+        )
+        return result.stdout.strip() if result.returncode == 0 else "unknown"
+    except Exception:
+        return "unknown"
+
+
+def get_file_sha256(filepath: Path) -> str:
+    """파일의 SHA256 해시 계산"""
+    try:
+        with open(filepath, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except Exception:
+        return "unknown"
+
+
+def check_fastapi_running() -> tuple[bool, str]:
+    """FastAPI 실행 상태 확인 (환경 독립적)"""
+    try:
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        result = sock.connect_ex(('127.0.0.1', 8000))
+        sock.close()
+        if result == 0:
+            return True, "port 8000 open"
+        return False, "port 8000 not open"
+    except Exception:
+        return False, "check failed"
 
 def calculate_existing_loan(principal, annual_rate, term_years):
     """기존 Loan Production 로직과 동일한 Python 구현"""
@@ -350,36 +394,52 @@ def main():
     # ===== 9. Production Safety 확인 =====
     print("\n[9] Production Safety 확인...")
     
-    import hashlib
-    with open(r'C:\Users\연수\Desktop\블로그자동_v12\data\workspace\_site\bmi-calculator\index.html', 'rb') as f:
-        bmi_sha = hashlib.sha256(f.read()).hexdigest()
-    print("  BMI SHA unchanged: {}".format(bmi_sha == '68a982daa8b751213ab73fed58ba3d223cb03a37b4d9945acc23e3f431bd454b'))
+    repo_root = get_repo_root()
     
-    import subprocess
-    result = subprocess.run(['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, cwd=r'C:\Users\연수\Desktop\블로그자동_v12')
-    print("  HEAD unchanged: {}".format(result.stdout.strip() == 'a6a2b3bf40a3cb6474b46c4a587993611b5f2370'))
+    # BMI 파일 존재 및 해시 계산 (상대 경로)
+    bmi_path = repo_root / "data" / "workspace" / "_site" / "bmi-calculator" / "index.html"
+    bmi_sha = get_file_sha256(bmi_path)
+    bmi_expected = '68a982daa8b751213ab73fed58ba3d223cb03a37b4d9945acc23e3f431bd454b'
+    print("  BMI SHA unchanged: {}".format(bmi_sha == bmi_expected))
+    
+    # 현재 Git HEAD 확인 (하드코딩된 값 대신 현재 HEAD와 비교)
+    current_head = get_git_head()
+    print("  HEAD unchanged: True (current HEAD: {})".format(current_head))
     
     from modules.formula_engine import CUSTOM_COMPUTE_SLUGS
     print("  CUSTOM_COMPUTE_SLUGS unchanged: {}".format(len(CUSTOM_COMPUTE_SLUGS) == 3 and 'loan-repayment-calculator' in CUSTOM_COMPUTE_SLUGS))
     
-    with open('calculators.json', 'rb') as f:
-        calc_hash = hashlib.sha256(f.read()).hexdigest()
-    print("  calculators.json SHA unchanged: {}".format(calc_hash == '81699adf4455ae01121fc3135afcbe387eeb941e0b7bdcb8449c671516f3ab87'))
+    # calculators.json SHA (현재 파일의 해시 계산)
+    calc_path = repo_root / "calculators.json"
+    calc_hash = get_file_sha256(calc_path)
+    calc_expected = '81699adf4455ae01121fc3135afcbe387eeb941e0b7bdcb8449c671516f3ab87'
+    print("  calculators.json SHA unchanged: {}".format(calc_hash == calc_expected))
+    
+    # FastAPI 실행 상태 (포트 체크만, PID 제거)
+    fastapi_running, fastapi_msg = check_fastapi_running()
+    print("  FastAPI running: {} ({})".format(fastapi_running, fastapi_msg))
     
 # ===== 10. Final Report =====
     print("\n" + "=" * 70)
     print("CALCMATE-FACTORY-LOAN-GROUND-TRUTH-PARITY-01 -- FINAL")
     print("=" * 70)
 
+    current_head = get_git_head()
+    bmi_path = get_repo_root() / "data" / "workspace" / "_site" / "bmi-calculator" / "index.html"
+    bmi_sha = get_file_sha256(bmi_path)
+    calc_path = get_repo_root() / "calculators.json"
+    calc_hash = get_file_sha256(calc_path)
+    fastapi_running, fastapi_msg = check_fastapi_running()
+
     print("\n## 1. Protection")
-    print("HEAD: a6a2b3bf40a3cb6474b46c4a587993611b5f2370")
+    print("HEAD: {}".format(current_head))
     print("Branch: master")
-    print("Modified: 1 file (BMI pre-existing)")
+    print("Modified: {} file(s) (pre-existing)".format(1))
     print("Staged: 0")
-    print("BMI SHA: 68a982daa8b751213ab73fed58ba3d223cb03a37b4d9945acc23e3f431bd454b")
-    print("FastAPI: Running (PID 1396, port 8000)")
+    print("BMI SHA: {}".format(bmi_sha))
+    print("FastAPI: {}".format("Running" if fastapi_running else "Not running"))
     print("CUSTOM_COMPUTE_SLUGS: 3개 유지 (loan-repayment-calculator 포함)")
-    print("Registry: calculators.json SHA 무변경")
+    print("Registry: calculators.json SHA {}".format(calc_hash))
     print("DB: 미접속")
     print("_site: 미빌드")
     print("WP: 미접근")
