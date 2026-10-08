@@ -1,12 +1,10 @@
-name: Backend CI
+name: CalcMate CI
 
 on:
   pull_request:
-    branches:
-      - master
+    branches: [master]
   push:
-    branches:
-      - master
+    branches: [master]
     paths:
       - "modules/**"
       - "content/**"
@@ -14,13 +12,27 @@ on:
       - "templates/library/**"
       - "requirements.txt"
       - ".github/workflows/ci.yml"
+      - "loan_ground_truth_parity.py"
+      - "pytest.ini"
+      - "conftest.py"
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * 1'  # Weekly Monday 02:00 UTC for dependency update validation
 
 permissions:
   contents: read
 
+env:
+  PYTHON_VERSION: "3.12"
+  PIP_CACHE_DIR: ~/.cache/pip
+
 jobs:
-  core-regression:
+  # Layer 1: Fast Unit Tests (< 60s target)
+  # Factory schemas, semantics, adapters, pure calculation
+  fast-unit:
+    name: Fast Unit Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,15 +40,146 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest
+          pip install pytest pytest-xdist
 
-      - name: Run core regression suite
+      - name: Run Fast Unit Tests
+        run: |
+          python -m pytest \
+            modules/factory/tests/test_factory_mvp.py \
+            -q --tb=short -x \
+            -k "not integration and not full_factory and not GroundTruth and not Parity and not QualityGates and not gate and not quality" \
+            --maxfail=5
+
+  # Layer 2: Ground Truth + Parity (< 90s target)
+  # Factory Ground Truth, Loan Ground Truth, Adapter Parity
+  ground-truth-parity:
+    name: Ground Truth & Parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-xdist formualizer mortgagemath
+
+      - name: Run Ground Truth & Parity Tests
+        run: |
+          # Factory Ground Truth + Parity
+          python -m pytest \
+            modules/factory/tests/test_factory_mvp.py \
+            -q --tb=short \
+            -k "GroundTruth or Parity" \
+            --maxfail=3
+
+          # Loan Ground Truth + mortgagemath Parity
+          python loan_ground_truth_parity.py
+
+      - name: Upload Parity Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-report
+          path: |
+            parity-report.json
+            ground-truth-summary.json
+          retention-days: 7
+
+  # Layer 3: Quality Gates (< 60s target)
+  # SpecGate, EvidenceGate, GroundTruthGate, ReferenceParityGate, etc.
+  quality-gates:
+    name: Quality Gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-xdist formualizer mortgagemath
+
+      - name: Run Quality Gates & Generate Summary
+        run: |
+          python generate_quality_gate_summary.py
+
+      - name: Upload Quality Gate Summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-gate-summary
+          path: |
+            quality-gate-summary.json
+          retention-days: 7
+
+  # Layer 4: Full Regression (Master only / workflow_dispatch)
+  # Factory + Loan + Existing tests
+  full-regression:
+    name: Full Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-xdist formualizer mortgagemath
+
+      - name: Run Factory MVP Tests (JUnit XML)
+        run: |
+          python -m pytest \
+            modules/factory/tests/test_factory_mvp.py \
+            -q --tb=short \
+            --maxfail=10 \
+            --junitxml=test-results-factory.xml
+
+      - name: Run Loan Calculator Tests (JUnit XML)
+        run: |
+          python -m pytest \
+            tests/test_loan_calculator.py \
+            -q --tb=short \
+            --maxfail=5 \
+            --junitxml=test-results-loan.xml
+
+      - name: Run Existing Core Regression Tests (JUnit XML)
         run: |
           python -m pytest \
             tests/test_step28_20_ssot_wiring.py \
@@ -45,4 +188,168 @@ jobs:
             tests/test_scheduler_line_isolation.py \
             tests/test_blog_scheduler.py \
             tests/test_blog_schedule_slots.py \
-            tests/test_step28_52_content_tracking.py
+            tests/test_step28_52_content_tracking.py \
+            -q --tb=short \
+            --maxfail=10 \
+            --junitxml=test-results-existing.xml
+
+      - name: Merge JUnit XML Reports
+        run: |
+          python -c "
+import xml.etree.ElementTree as ET
+import os
+
+# Merge multiple JUnit XML files
+testsuite_root = ET.Element('testsuites')
+total_tests = 0
+total_failures = 0
+total_errors = 0
+total_skipped = 0
+total_time = 0.0
+
+for xml_file in ['test-results-factory.xml', 'test-results-loan.xml', 'test-results-existing.xml']:
+    if os.path.exists(xml_file):
+        tree = ET.parse(xml_file)
+        root = tree.getroot()
+        # Handle both testsuite and testsuites root
+        if root.tag == 'testsuite':
+            suites = [root]
+        else:
+            suites = list(root)
+        
+        for suite in suites:
+            total_tests += int(suite.get('tests', 0))
+            total_failures += int(suite.get('failures', 0))
+            total_errors += int(suite.get('errors', 0))
+            total_skipped += int(suite.get('skipped', 0))
+            total_time += float(suite.get('time', 0))
+            testsuite_root.append(suite)
+
+# Write merged result
+merged_root = ET.Element('testsuites')
+merged_root.set('tests', str(total_tests))
+merged_root.set('failures', str(total_failures))
+merged_root.set('errors', str(total_errors))
+merged_root.set('skipped', str(total_skipped))
+merged_root.set('time', str(total_time))
+
+for child in testsuite_root:
+    merged_root.append(child)
+
+ET.ElementTree(merged_root).write('test-results.xml', encoding='utf-8', xml_declaration=True)
+print(f'Merged: tests={total_tests}, failures={total_failures}, errors={total_errors}, skipped={total_skipped}')
+          "
+
+      - name: Upload Regression Summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-summary
+          path: |
+            test-results.xml
+          retention-days: 7
+
+  # Dependency Update Validation (scheduled / manual)
+  # Validates OSS upgrades: formualizer, mortgagemath
+  dependency-update:
+    name: Dependency Update Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-xdist
+
+      - name: Check for OSS updates
+        id: check_updates
+        run: |
+          echo "Checking formualizer..."
+          CURRENT_FZ=$(python -c "import formualizer; print(formualizer.__version__ if hasattr(formualizer, '__version__') else '0.10.1')")
+          echo "current_formualizer=$CURRENT_FZ" >> $GITHUB_OUTPUT
+
+          echo "Checking mortgagemath..."
+          CURRENT_MM=$(python -c "import mortgagemath; print(mortgagemath.__version__)")
+          echo "current_mortgagemath=$CURRENT_MM" >> $GITHUB_OUTPUT
+
+      - name: Validate OSS upgrades
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          # Full validation pipeline for OSS upgrades
+          python -m pytest \
+            modules/factory/tests/test_factory_mvp.py \
+            -q --tb=short \
+            --maxfail=5
+
+          python loan_ground_truth_parity.py
+
+          # Quality Gates
+          python -m pytest \
+            modules/factory/tests/test_factory_mvp.py \
+            -q --tb=short \
+            -k "QualityGates or gate or quality" \
+            --maxfail=5
+
+      - name: Generate Dependency Validation Report
+        run: |
+          python generate_dependency_validation.py
+
+      - name: Upload Dependency Validation Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-validation
+          path: |
+            dependency-validation.json
+          retention-days: 30
+
+  # Summary Job - Aggregates results
+  summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [fast-unit, ground-truth-parity, quality-gates]
+    if: always()
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate Summary
+        run: |
+          echo "## CI Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Layer | Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          # Check each needed job
+          for job in fast-unit ground-truth-parity quality-gates; do
+            result="${{ needs.$job.result }}"
+            if [ "$result" == "success" ]; then
+              status="PASS"
+            elif [ "$result" == "failure" ]; then
+              status="FAIL"
+            elif [ "$result" == "cancelled" ]; then
+              status="CANCELLED"
+            else
+              status="UNKNOWN"
+            fi
+            echo "| $job | $job | $status |" >> $GITHUB_STEP_SUMMARY
+          done
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
+          ls -la artifacts/ >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No artifacts" >> $GITHUB_STEP_SUMMARY
