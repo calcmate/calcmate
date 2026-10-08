@@ -201,4 +201,44 @@ jobs:
       with:
         path: artifacts
     - name: Generate Summary
-      run: "echo \"## CI Summary\" >> $GITHUB_STEP_SUMMARY\necho \"\" >> $GITHUB_STEP_SUMMARY\necho \"| Layer | Job | Status |\" >> $GITHUB_STEP_SUMMARY\necho \"|-------|-----|--------|\" >> $GITHUB_STEP_SUMMARY\n\nfor job in fast-unit ground-truth-parity quality-gates; do\n  result=\"${{ needs.$job.result }}\"\n  if [ \"$result\" == \"success\" ]; then\n    status=\"PASS\"\n  elif [ \"$result\" == \"failure\" ]; then\n    status=\"FAIL\"\n  elif [ \"$result\" == \"cancelled\" ]; then\n    status=\"CANCELLED\"\n  else\n    status=\"UNKNOWN\"\n  fi\n  echo \"| $job | $job | $status |\" >> $GITHUB_STEP_SUMMARY\ndone\n\necho \"\" >> $GITHUB_STEP_SUMMARY\necho \"### Artifacts\" >> $GITHUB_STEP_SUMMARY\nls -la artifacts/ >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo \"No artifacts\" >> $GITHUB_STEP_SUMMARY"
+      run: 'echo "## CI Summary" >> $GITHUB_STEP_SUMMARY
+
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        echo "| Layer | Job | Status |" >> $GITHUB_STEP_SUMMARY
+
+        echo "|-------|-----|--------|" >> $GITHUB_STEP_SUMMARY
+
+
+        # fast-unit
+
+        result="${{ needs.fast-unit.result }}"
+
+        if [ "$result" == "success" ]; then status="PASS"; elif [ "$result" == "failure" ]; then status="FAIL"; elif [ "$result" == "cancelled" ]; then status="CANCELLED"; else status="UNKNOWN"; fi
+
+        echo "| fast-unit | fast-unit | $status |" >> $GITHUB_STEP_SUMMARY
+
+
+        # ground-truth-parity
+
+        result="${{ needs.ground-truth-parity.result }}"
+
+        if [ "$result" == "success" ]; then status="PASS"; elif [ "$result" == "failure" ]; then status="FAIL"; elif [ "$result" == "cancelled" ]; then status="CANCELLED"; else status="UNKNOWN"; fi
+
+        echo "| ground-truth-parity | ground-truth-parity | $status |" >> $GITHUB_STEP_SUMMARY
+
+
+        # quality-gates
+
+        result="${{ needs.quality-gates.result }}"
+
+        if [ "$result" == "success" ]; then status="PASS"; elif [ "$result" == "failure" ]; then status="FAIL"; elif [ "$result" == "cancelled" ]; then status="CANCELLED"; else status="UNKNOWN"; fi
+
+        echo "| quality-gates | quality-gates | $status |" >> $GITHUB_STEP_SUMMARY
+
+
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
+
+        ls -la artifacts/ >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No artifacts" >> $GITHUB_STEP_SUMMARY'
