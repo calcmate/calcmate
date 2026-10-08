@@ -67,7 +67,7 @@ jobs:
         pip install pytest pytest-xdist formualizer mortgagemath'
     - name: Run Ground Truth & Parity Tests
       env:
-        PYTHONPATH: ${{ github.workspace }}
+        PYTHONPATH: .
       run: "# Factory Ground Truth + Parity\npython -m pytest \\\n  modules/factory/tests/test_factory_mvp.py \\\n  -q --tb=short \\\n  -k \"GroundTruth or Parity\" \\\n  --maxfail=3\n\n# Loan Ground Truth + mortgagemath Parity\npython loan_ground_truth_parity.py"
     - name: Upload Parity Report
       if: always()
@@ -99,7 +99,7 @@ jobs:
         pip install pytest pytest-xdist formualizer mortgagemath'
     - name: Run Quality Gates & Generate Summary
       env:
-        PYTHONPATH: ${{ github.workspace }}
+        PYTHONPATH: .
       run: python generate_quality_gate_summary.py
     - name: Upload Quality Gate Summary
       if: always()
@@ -179,7 +179,7 @@ jobs:
     - name: Check for OSS updates
       id: check_updates
       env:
-        PYTHONPATH: ${{ github.workspace }}
+        PYTHONPATH: .
       run: 'echo "Checking formualizer..."
 
         CURRENT_FZ=$(python -c "import formualizer; print(formualizer.__version__ if hasattr(formualizer, ''__version__'') else ''0.10.1'')")
@@ -195,11 +195,11 @@ jobs:
     - name: Validate OSS upgrades
       if: github.event_name == "workflow_dispatch"
       env:
-        PYTHONPATH: ${{ github.workspace }}
+        PYTHONPATH: .
       run: "python -m pytest \\\n  modules/factory/tests/test_factory_mvp.py \\\n  -q --tb=short \\\n  --maxfail=5\n\npython loan_ground_truth_parity.py\n\n# Quality Gates\npython -m pytest \\\n  modules/factory/tests/test_factory_mvp.py \\\n  -q --tb=short \\\n  -k \"QualityGates or gate or quality\" \\\n  --maxfail=5"
     - name: Generate Dependency Validation Report
       env:
-        PYTHONPATH: ${{ github.workspace }}
+        PYTHONPATH: .
       run: python generate_dependency_validation.py
     - name: Upload Dependency Validation Report
       if: always()
