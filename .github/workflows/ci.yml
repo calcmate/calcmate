@@ -66,6 +66,8 @@ jobs:
 
         pip install pytest pytest-xdist formualizer mortgagemath'
     - name: Run Ground Truth & Parity Tests
+      env:
+        PYTHONPATH: .
       run: "# Factory Ground Truth + Parity\npython -m pytest \\\n  modules/factory/tests/test_factory_mvp.py \\\n  -q --tb=short \\\n  -k \"GroundTruth or Parity\" \\\n  --maxfail=3\n\n# Loan Ground Truth + mortgagemath Parity\npython loan_ground_truth_parity.py"
     - name: Upload Parity Report
       if: always()
@@ -96,6 +98,8 @@ jobs:
 
         pip install pytest pytest-xdist formualizer mortgagemath'
     - name: Run Quality Gates & Generate Summary
+      env:
+        PYTHONPATH: .
       run: python generate_quality_gate_summary.py
     - name: Upload Quality Gate Summary
       if: always()
@@ -108,7 +112,7 @@ jobs:
     name: Full Regression
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == "push" || github.event_name == "workflow_dispatch"
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -126,6 +130,18 @@ jobs:
         pip install pytest pytest-xdist formualizer mortgagemath'
     - name: Run Factory MVP Tests (JUnit XML)
       run: "python -m pytest \\\n  modules/factory/tests/test_factory_mvp.py \\\n  -q --tb=short \\\n  --maxfail=10 \\\n  --junitxml=test-results-factory.xml"
+    - name: Diagnose Loan Test Path
+      run: 'pwd
+
+        git rev-parse --show-toplevel
+
+        ls -la
+
+        ls -la tests
+
+        git status --short
+
+        git ls-files tests/test_loan_calculator.py'
     - name: Run Loan Calculator Tests (JUnit XML)
       run: "python -m pytest \\\n  tests/test_loan_calculator.py \\\n  -q --tb=short \\\n  --maxfail=5 \\\n  --junitxml=test-results-loan.xml"
     - name: Run Existing Core Regression Tests (JUnit XML)
@@ -144,7 +160,7 @@ jobs:
     name: Dependency Update Validation
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == "schedule" || github.event_name == "workflow_dispatch"
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -162,6 +178,8 @@ jobs:
         pip install pytest pytest-xdist formualizer mortgagemath'
     - name: Check for OSS updates
       id: check_updates
+      env:
+        PYTHONPATH: .
       run: 'echo "Checking formualizer..."
 
         CURRENT_FZ=$(python -c "import formualizer; print(formualizer.__version__ if hasattr(formualizer, ''__version__'') else ''0.10.1'')")
@@ -171,13 +189,17 @@ jobs:
 
         echo "Checking mortgagemath..."
 
-        CURRENT_MM=$(python -c "import mortgagemath; print(mortgagemath.__version__")
+        CURRENT_MM=$(python -c "import mortgagemath; print(mortgagemath.__version__)")
 
         echo "current_mortgagemath=$CURRENT_MM" >> $GITHUB_OUTPUT'
     - name: Validate OSS upgrades
-      if: github.event_name == 'workflow_dispatch'
+      if: github.event_name == "workflow_dispatch"
+      env:
+        PYTHONPATH: .
       run: "python -m pytest \\\n  modules/factory/tests/test_factory_mvp.py \\\n  -q --tb=short \\\n  --maxfail=5\n\npython loan_ground_truth_parity.py\n\n# Quality Gates\npython -m pytest \\\n  modules/factory/tests/test_factory_mvp.py \\\n  -q --tb=short \\\n  -k \"QualityGates or gate or quality\" \\\n  --maxfail=5"
     - name: Generate Dependency Validation Report
+      env:
+        PYTHONPATH: .
       run: python generate_dependency_validation.py
     - name: Upload Dependency Validation Report
       if: always()
