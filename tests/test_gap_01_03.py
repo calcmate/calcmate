@@ -67,6 +67,8 @@ REG = {
 
 @pytest.fixture(autouse=True)
 def env(monkeypatch, tmp_path):
+    # 배포 동결 표식 상태와 무관하게 기존 재빌드 계약을 검증한다.
+    monkeypatch.setenv("CALCMATE_DEPLOY_FREEZE_MARKER", str(tmp_path / "no-freeze"))
     monkeypatch.setenv("CALCMATE_DASHBOARD_AUTH_TOKEN_VIEWER", VIEWER_TOKEN)
     monkeypatch.setenv("CALCMATE_DASHBOARD_AUTH_TOKEN_ADMIN", ADMIN_TOKEN)
     monkeypatch.delenv("CALCMATE_DASHBOARD_LOCAL_MODE", raising=False)

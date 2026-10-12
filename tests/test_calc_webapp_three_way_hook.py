@@ -172,10 +172,12 @@ def test_h2_notify_layer_exception_does_not_raise():
     assert result["notifications"][0]["telegram_result"] == "failed"
 
 
-def test_h3_calc_webapp_once_success_unaffected_by_three_way_crash(tmp_path):
+def test_h3_calc_webapp_once_success_unaffected_by_three_way_crash(tmp_path, monkeypatch):
     """3-Way 안전 진입점 자체가(가정: 버그로) raise 하더라도, 계산기 웹앱
     운영 작업(run_calc_webapp_once)의 정상 반환값은 절대 훼손되지 않는다
     — 호출부의 이중 방어(try/except)를 실제로 검증한다."""
+    # 배포 동결 표식 상태와 무관하게 기존 동작을 검증한다.
+    monkeypatch.setenv("CALCMATE_DEPLOY_FREEZE_MARKER", str(tmp_path / "no-freeze"))
     from modules import calc_webapp_pipeline as pipeline
 
     cfg = {"CALC_WEBAPP_SCHEDULE": {"mode": "qa_only", "targets": ["calc_1"]}}

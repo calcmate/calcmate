@@ -614,6 +614,15 @@ def deploy_calculator(slug: str) -> dict:
     승인해야 배포 가능 — dashboard.py:1753-1796)가 React/FastAPI 경로에는 없어서
     Build 성공만으로 즉시 배포가 가능했던 안전 게이트 약화를 여기서 복원한다.
     HOLD/needs_human_legal 체크 및 build_calculator() 재사용 순서는 무변경."""
+    # 배포 동결(DEPLOY-FREEZE B2): 어떤 조회·빌드보다 먼저 차단한다.
+    from modules.deploy_freeze import is_frozen, FROZEN_MESSAGE
+    if is_frozen():
+        return {
+            "ok": False, "slug": slug, "stage": "freeze",
+            "blocked_reason": FROZEN_MESSAGE,
+            "build_result": None, "published_url": None,
+        }
+
     calc, v3_reg, cfg = _get_calc_or_raise(slug)
     v3e = v3_reg.get(slug) or {}
 

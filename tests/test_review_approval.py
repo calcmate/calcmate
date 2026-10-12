@@ -49,6 +49,12 @@ _BEFORE_REGISTRY_SNAPSHOT = _registry_snapshot()
 
 
 @pytest.fixture(autouse=True)
+def _deploy_not_frozen(monkeypatch, tmp_path):
+    """배포 동결 표식 상태와 무관하게 기존 승인 게이트를 검증한다."""
+    monkeypatch.setenv("CALCMATE_DEPLOY_FREEZE_MARKER", str(tmp_path / "no-freeze"))
+
+
+@pytest.fixture(autouse=True)
 def _fresh_review_approval_store():
     import api.services.review_approval_store as review_store_module
     review_store_module._store = None

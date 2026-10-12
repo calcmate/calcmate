@@ -40,6 +40,12 @@ def _pick_target_id(cfg: dict):
 def run_calc_webapp_once(cfg: dict, max_count: int = 1) -> dict:
     """계산기 웹앱 1건 생성→스냅샷→QA→[배포]. modules/scheduler.py 호환 시그니처
     (execute_due_post/immediate_publish가 기대하는 (cfg, max_count=1)->dict)."""
+    # 배포 동결(DEPLOY-FREEZE B2): QA 전에 _site 스냅샷을 덮어쓰므로 동결 중에는 아무것도 하지 않는다.
+    from .deploy_freeze import is_frozen
+    if is_frozen():
+        LOG.warning("계산기 웹앱 자동 실행 건너뜀 — 배포 동결 중(data/workspace/DEPLOY_FREEZE)")
+        return {"produced": 0, "reason": "deploy_freeze"}
+
     sched_cfg = cfg.get("CALC_WEBAPP_SCHEDULE", {}) or {}
     mode = str(sched_cfg.get("mode", "qa_only")).strip().lower()
     if mode not in ("qa_only", "qa_deploy"):

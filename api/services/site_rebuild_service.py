@@ -124,6 +124,11 @@ def rebuild_site(slug: str) -> dict:
     from api.services import calculator_service as CS
     from modules import wp_blog_deploy as WBD
     from modules.review_center import pre_build_qa
+    from modules.deploy_freeze import is_frozen, FROZEN_MESSAGE
+
+    # 배포 동결(DEPLOY-FREEZE B2): 전체 재빌드는 _site의 모든 계산기를 다시 쓰므로 가장 먼저 차단.
+    if is_frozen():
+        raise SiteRebuildError("DEPLOY_FROZEN", FROZEN_MESSAGE)
 
     try:
         CS._validate_slug(slug)

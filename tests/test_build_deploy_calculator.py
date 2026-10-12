@@ -24,6 +24,13 @@ from _route_utils import write_routes
 
 
 @pytest.fixture(autouse=True)
+def _deploy_not_frozen(monkeypatch, tmp_path):
+    """배포 동결 표식(data/workspace/DEPLOY_FREEZE)이 실제 저장소에 있어도 이 파일의
+    기존 게이트 테스트가 그 상태에 의존하지 않도록 존재하지 않는 경로로 고정한다."""
+    monkeypatch.setenv("CALCMATE_DEPLOY_FREEZE_MARKER", str(tmp_path / "no-freeze"))
+
+
+@pytest.fixture(autouse=True)
 def _fresh_review_approval_store():
     """STEP S1: review_approval_store는 프로세스 전역 in-memory 싱글턴이므로,
     테스트 간 승인 상태가 새지 않도록 매 테스트마다 새로 만든다."""

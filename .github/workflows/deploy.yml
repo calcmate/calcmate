@@ -5,7 +5,6 @@ on:
     branches: [master]
     paths:
       - 'data/workspace/_site/**'
-      - 'modules/**'
       - '.github/workflows/deploy.yml'
 
 permissions:
@@ -26,6 +25,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # 배포 동결(DEPLOY-FREEZE B3): 계산기 산출물이 동결 기준선과 하나라도 다르면 업로드 전에 실패한다.
+      # 공용 사이트 파일(index/sitemap/공통 페이지)은 비교 대상이 아니다.
+      - name: Calculator deploy freeze guard
+        run: python3 scripts/deploy_freeze_guard.py check --baseline .github/deploy_freeze_baseline.json
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
