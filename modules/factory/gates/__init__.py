@@ -20,6 +20,7 @@ class GateStatus(str, Enum):
     FAIL = "FAIL"
     SKIPPED = "SKIPPED"
     NOT_APPLICABLE = "NOT_APPLICABLE"
+    ERROR = "ERROR"
 
 
 class GateSeverity(str, Enum):
@@ -490,6 +491,22 @@ class QualityGateRunner:
             "critical_failures": sum(1 for r in self._results if r.is_critical_fail()),
             "hold_required": self.has_critical_fail(),
             "results": [r.to_dict() for r in self._results],
+        }
+
+    def to_summary_json(self) -> dict:
+        """CI artifact용 요약 JSON 생성."""
+        overall_status = "PASS"
+        if self.has_critical_fail():
+            overall_status = "FAIL"
+        elif any(r.status == GateStatus.FAIL for r in self._results):
+            overall_status = "FAIL"
+        elif any(r.status == GateStatus.ERROR for r in self._results):
+            overall_status = "ERROR"
+
+        return {
+            "status": overall_status,
+            "summary": self.to_dict(),
+            "gates": [r.to_dict() for r in self._results],
         }
 
 
