@@ -20,6 +20,7 @@ class GateStatus(str, Enum):
     FAIL = "FAIL"
     SKIPPED = "SKIPPED"
     NOT_APPLICABLE = "NOT_APPLICABLE"
+    ERROR = "ERROR"
 
 
 class GateSeverity(str, Enum):
@@ -393,14 +394,18 @@ class ReleaseGate(QualityGate):
                               diagnostics=["ReleaseManifest not provided"])
 
         errors = []
+        # 하위 버전 8개는 manifest.versions(VersionBundle)에 있다
         required_versions = [
             "spec_version", "semantics_version", "evidence_version",
             "parameter_version", "engine_version", "ui_version",
-            "content_version", "validation_version", "release_version"
+            "content_version", "validation_version",
         ]
+        versions = getattr(manifest, "versions", None)
         for v in required_versions:
-            if not getattr(manifest, v, None):
+            if not getattr(versions, v, None):
                 errors.append(f"Missing version: {v}")
+        if not getattr(manifest, "release_version", None):
+            errors.append("Missing version: release_version")
 
         if not manifest.calculator_id:
             errors.append("Missing calculator_id")
@@ -490,6 +495,22 @@ class QualityGateRunner:
             "critical_failures": sum(1 for r in self._results if r.is_critical_fail()),
             "hold_required": self.has_critical_fail(),
             "results": [r.to_dict() for r in self._results],
+        }
+
+    def to_summary_json(self) -> dict:
+        """CI artifact용 요약 JSON 생성."""
+        overall_status = "PASS"
+        if self.has_critical_fail():
+            overall_status = "FAIL"
+        elif any(r.status == GateStatus.FAIL for r in self._results):
+            overall_status = "FAIL"
+        elif any(r.status == GateStatus.ERROR for r in self._results):
+            overall_status = "ERROR"
+
+        return {
+            "status": overall_status,
+            "summary": self.to_dict(),
+            "gates": [r.to_dict() for r in self._results],
         }
 
 
