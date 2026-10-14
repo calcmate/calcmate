@@ -394,14 +394,18 @@ class ReleaseGate(QualityGate):
                               diagnostics=["ReleaseManifest not provided"])
 
         errors = []
+        # 하위 버전 8개는 manifest.versions(VersionBundle)에 있다
         required_versions = [
             "spec_version", "semantics_version", "evidence_version",
             "parameter_version", "engine_version", "ui_version",
-            "content_version", "validation_version", "release_version"
+            "content_version", "validation_version",
         ]
+        versions = getattr(manifest, "versions", None)
         for v in required_versions:
-            if not getattr(manifest, v, None):
+            if not getattr(versions, v, None):
                 errors.append(f"Missing version: {v}")
+        if not getattr(manifest, "release_version", None):
+            errors.append("Missing version: release_version")
 
         if not manifest.calculator_id:
             errors.append("Missing calculator_id")
