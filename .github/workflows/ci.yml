@@ -43,9 +43,9 @@ jobs:
 
         pip install -r requirements.txt
 
-        pip install pytest pytest-xdist'
+        pip install pytest pytest-xdist hypothesis==6.92.1'
     - name: Run Fast Unit Tests
-      run: "python -m pytest \\\n  modules/factory/tests/test_factory_mvp.py \\\n  -q --tb=short -x \\\n  -k \"not integration and not full_factory and not GroundTruth and not Parity and not QualityGates and not gate and not quality\" \\\n  --maxfail=5"
+      run: "python -m pytest \\\n  modules/factory/tests/test_factory_mvp.py \\\n  modules/factory/tests/test_property_parity.py \\\n  -q --tb=short -x \\\n  -k \"not integration and not full_factory and not GroundTruth and not Parity and not QualityGates and not gate and not quality\" \\\n  --maxfail=5"
   ground-truth-parity:
     name: Ground Truth & Parity
     runs-on: ubuntu-latest
