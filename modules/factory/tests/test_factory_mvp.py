@@ -438,6 +438,32 @@ class TestQualityGates:
         assert "GroundTruthGate" in gates
         assert "ReferenceParityGate" in gates
 
+    def test_release_gate_passes_valid_manifest(self):
+        manifest = ReleaseManifest(
+            calculator_id="test-calc",
+            slug="test-calc",
+            release_version="1.0.0",
+            versions=VersionBundle(),
+            approved_by="tester",
+            approval_role="admin",
+        )
+        result = ReleaseGate().execute(QualityGateContext(release_manifest=manifest))
+        assert result.status == GateStatus.PASS
+        assert not any(d.startswith("Missing version") for d in result.diagnostics)
+
+    def test_release_gate_fails_missing_version(self):
+        manifest = ReleaseManifest(
+            calculator_id="test-calc",
+            slug="test-calc",
+            release_version="1.0.0",
+            versions=VersionBundle(engine_version=""),
+            approved_by="tester",
+            approval_role="admin",
+        )
+        result = ReleaseGate().execute(QualityGateContext(release_manifest=manifest))
+        assert result.status == GateStatus.FAIL
+        assert result.diagnostics == ["Missing version: engine_version"]
+
 
 # ===== UI Schema Tests =====
 
