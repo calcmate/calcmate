@@ -145,7 +145,7 @@ jobs:
     - name: Run Loan Calculator Tests (JUnit XML)
       run: "python -m pytest \\\n  tests/test_loan_calculator.py \\\n  -q --tb=short \\\n  --maxfail=5 \\\n  --junitxml=test-results-loan.xml"
     - name: Run Existing Core Regression Tests (JUnit XML)
-      run: "python -m pytest \\\n  tests/test_step28_20_ssot_wiring.py \\\n  tests/test_step28_24_content_ssot_prompt_wiring.py \\\n  tests/test_step28_26_db_save_gate.py \\\n  tests/test_scheduler_line_isolation.py \\\n  tests/test_blog_scheduler.py \\\n  tests/test_blog_schedule_slots.py \\\n  tests/test_step28_52_content_tracking.py \\\n  -q --tb=short \\\n  --maxfail=10 \\\n  --junitxml=test-results-existing.xml"
+      run: "python -m pytest \\\n  tests/test_step28_20_ssot_wiring.py \\\n  tests/test_step28_24_content_ssot_prompt_wiring.py \\\n  tests/test_step28_26_db_save_gate.py \\\n  tests/test_scheduler_line_isolation.py \\\n  tests/test_blog_scheduler.py \\\n  tests/test_blog_schedule_slots.py \\\n  tests/test_step28_52_content_tracking.py \\\n  tests/test_ci_summary_gate.py \\\n  -q --tb=short \\\n  --maxfail=10 \\\n  --junitxml=test-results-existing.xml"
     - name: Merge JUnit XML Reports
       run: python merge_junit.py
     - name: Upload Regression Summary
@@ -263,3 +263,20 @@ jobs:
         echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
 
         ls -la artifacts/ >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No artifacts" >> $GITHUB_STEP_SUMMARY'
+    # 필수 job(needs)이 하나라도 success가 아니면 CI Summary job도 실패시킨다(fail-closed).
+    - name: Enforce required job results
+      env:
+        FAST_UNIT_RESULT: ${{ needs.fast-unit.result }}
+        GROUND_TRUTH_PARITY_RESULT: ${{ needs.ground-truth-parity.result }}
+        QUALITY_GATES_RESULT: ${{ needs.quality-gates.result }}
+      run: |
+        failed=0
+        for pair in "fast-unit=$FAST_UNIT_RESULT" "ground-truth-parity=$GROUND_TRUTH_PARITY_RESULT" "quality-gates=$QUALITY_GATES_RESULT"; do
+          job="${pair%%=*}"
+          result="${pair#*=}"
+          if [ "$result" != "success" ]; then
+            echo "::error::Required job '$job' result: ${result:-missing}"
+            failed=1
+          fi
+        done
+        exit $failed
